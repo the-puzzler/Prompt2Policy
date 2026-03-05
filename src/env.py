@@ -16,9 +16,11 @@ SCENE_XML = os.path.join(PROJECT_ROOT, "mujoco_menagerie", "franka_fr3", "reach_
 IMG_WIDTH = 64
 IMG_HEIGHT = 64
 
-# Workspace bounds for target randomization (in front of the robot)
-TARGET_LOW = np.array([0.15, -0.4, 0.15])
-TARGET_HIGH = np.array([0.65, 0.4, 0.65])
+# Workspace bounds for target randomization (reachable front workspace)
+TARGET_LOW = np.array([0.2, -0.4, 0.1])
+TARGET_HIGH = np.array([0.65, 0.4, 0.7])
+TARGET_RADIUS_MIN = 0.25  # min distance from base (avoid too close)
+TARGET_RADIUS_MAX = 0.75  # max distance from base (avoid unreachable)
 
 MAX_EPISODE_STEPS = 200
 
@@ -99,8 +101,12 @@ class FrankaReachEnv(gym.Env):
         return self.data.xpos[self.target_body_id].copy()
 
     def _randomize_target(self):
-        target_pos = self.np_random.uniform(low=TARGET_LOW, high=TARGET_HIGH)
-        # Set the mocap or body position for the target
+        # Rejection sample: box intersected with spherical shell around base
+        while True:
+            target_pos = self.np_random.uniform(low=TARGET_LOW, high=TARGET_HIGH)
+            dist = np.linalg.norm(target_pos)
+            if TARGET_RADIUS_MIN <= dist <= TARGET_RADIUS_MAX:
+                break
         self.model.body_pos[self.target_body_id] = target_pos
 
     def _get_obs(self):

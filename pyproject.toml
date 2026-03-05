@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "PPO reach task for Franka FR3 in MuJoCo"
 requires-python = ">=3.10"
 dependencies = [
+    "setuptools<82",
     "mujoco",
     "gymnasium",
     "stable-baselines3",
