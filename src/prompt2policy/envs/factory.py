@@ -28,6 +28,7 @@ def create_env(
     control_timestep: float,
     physics_timestep: float,
     model_id: str,
+    visualize: bool = False,
 ) -> HybridRobotEnv:
     LOGGER.info(
         "Creating env | backend=%s | model_id=%s | scene_path=%s",
@@ -42,12 +43,14 @@ def create_env(
             world_spec=task_spec.world_spec,
             physics_timestep=physics_timestep,
             control_timestep=control_timestep,
+            visualize=visualize,
         )
     elif backend_name == "mcp":
         backend = MCPEnvBackend(
             workspace_root=workspace_root,
             scene_path=scene_path,
             robot_spec=robot_spec,
+            world_spec=task_spec.world_spec,
             model_id=model_id,
             control_timestep=control_timestep,
         )

@@ -20,16 +20,30 @@ class PPOAdapter(AlgorithmAdapter):
             raise RuntimeError("stable-baselines3 is required for PPOAdapter") from exc
 
         if self.model is None:
+            policy_name = str(config.param("policy", "MultiInputPolicy"))
+            overridden_core_keys = {
+                "policy",
+                "learning_rate",
+                "n_steps",
+                "batch_size",
+                "gamma",
+            }
+            ppo_extra_kwargs = {
+                key: value
+                for key, value in config.algorithm_params.items()
+                if key not in overridden_core_keys
+            }
             self.model = PPO(
-                policy="MultiInputPolicy",
+                policy=policy_name,
                 env=env,
-                learning_rate=config.learning_rate,
-                n_steps=config.n_steps,
-                batch_size=config.batch_size,
-                gamma=config.gamma,
+                learning_rate=float(config.param("learning_rate", config.learning_rate)),
+                n_steps=int(config.param("n_steps", config.n_steps)),
+                batch_size=int(config.param("batch_size", config.batch_size)),
+                gamma=float(config.param("gamma", config.gamma)),
                 seed=config.seed,
                 device=config.device,
                 verbose=config.verbose,
+                **ppo_extra_kwargs,
             )
 
         self.model.learn(total_timesteps=config.total_timesteps)

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .specs import CameraSpec, ObjectSpec, WorldSpec
+
+
+LOGGER = logging.getLogger("prompt2policy.world_builder")
 
 
 class WorldBuilder:
@@ -19,6 +23,17 @@ class WorldBuilder:
         base_scene_path = self._resolve_path(world_spec.base_scene)
         tree = ET.parse(base_scene_path)
         root = tree.getroot()
+
+        # Many Menagerie scenes rely on include-relative asset behavior that can break
+        # when serialized to another directory. For now, keep include-based scenes
+        # untouched and use task/world overrides logically in the environment layer.
+        if root.find("include") is not None:
+            LOGGER.warning(
+                "Base scene %s uses <include>; using original scene path to preserve "
+                "asset resolution. World overrides remain available via task metadata.",
+                base_scene_path,
+            )
+            return base_scene_path
 
         self._absolutize_includes(root, base_scene_path.parent)
         self._ensure_compiler_paths(root, base_scene_path.parent)

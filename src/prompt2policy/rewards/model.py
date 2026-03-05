@@ -39,12 +39,13 @@ class CompiledRewardModel:
         return float(total)
 
     def is_success(self, observation: dict[str, np.ndarray], info: dict[str, Any]) -> bool:
+        termination_threshold = self.spec.termination_threshold
         if self.spec.success_metric == "distance_to_goal":
             distance = float(info.get("distance_to_goal", np.inf))
-            return distance <= self.spec.success_threshold
+            return distance <= termination_threshold
 
         reward_value = float(info.get("episode_reward", -np.inf))
-        return reward_value >= self.spec.success_threshold
+        return reward_value >= termination_threshold
 
     def _term_value(self, term: RewardTermSpec, action: np.ndarray, info: dict[str, Any]) -> float:
         if term.type == "distance":

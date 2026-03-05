@@ -17,21 +17,46 @@ from prompt2policy.curriculum.generator import LLMCurriculumGenerator
 from prompt2policy.curriculum.promotion import PromotionRule
 from prompt2policy.envs.factory import create_env
 from prompt2policy.llm.mock_provider import MockLLMProvider
-from prompt2policy.rewards.model import compile_reward_model
-from prompt2policy.world.builder import WorldBuilder
+from prompt2policy.training.runtime_factory import (
+    build_scene_and_reward,
+    build_train_and_eval_envs,
+)
 
 
 LOGGER = logging.getLogger("prompt2policy.curriculum_runner")
 
 
 class CurriculumRunner:
-    def __init__(self, workspace_root: Path, experiment_config_path: Path):
+    def __init__(
+        self,
+        workspace_root: Path,
+        experiment_config_path: Path,
+        backend_override: str | None = None,
+        visualize: bool = False,
+    ):
         self.workspace_root = workspace_root
         self.experiment_config_path = experiment_config_path
+        self.backend_override = backend_override
+        self.visualize = visualize
 
     def run(self) -> dict[str, Any]:
         LOGGER.info("Loading experiment config from %s", self.experiment_config_path)
         experiment = load_experiment_config(self.experiment_config_path)
+
+        if self.backend_override is not None:
+            LOGGER.info(
+                "Overriding backend from '%s' to '%s' via CLI flag",
+                experiment.runtime.backend,
+                self.backend_override,
+            )
+            experiment.runtime.backend = self.backend_override
+
+        if self.visualize:
+            LOGGER.info(
+                "Visualization is enabled (native viewer if backend=native, backend=%s)",
+                experiment.runtime.backend,
+            )
+
         robot_spec = load_robot_spec(self._resolve(experiment.robot_config_path))
         current_task = load_task_spec(self._resolve(experiment.seed_task_path))
 
@@ -52,7 +77,6 @@ class CurriculumRunner:
             current_task.success_threshold_reward,
         )
 
-        world_builder = WorldBuilder(workspace_root=self.workspace_root)
         promotion_rule = PromotionRule(window_size=experiment.curriculum.promotion_window_size)
         llm_provider = self._build_llm_provider(experiment)
         curriculum_generator = LLMCurriculumGenerator(
@@ -76,18 +100,16 @@ class CurriculumRunner:
                 current_task.task_id,
             )
 
-            scene_path = world_builder.compose_scene(
-                world_spec=current_task.world_spec,
-                output_path=stage_dir / "scene.xml",
-                default_camera=robot_spec.camera_defaults[0],
+            scene_path, reward_model = build_scene_and_reward(
+                workspace_root=self.workspace_root,
+                output_scene_path=stage_dir / "scene.xml",
+                robot_spec=robot_spec,
+                task_spec=current_task,
             )
             LOGGER.info("Scene composed at %s", scene_path)
-
-            reward_model = compile_reward_model(current_task.reward_spec)
             LOGGER.info("Reward model compiled with %d terms", len(current_task.reward_spec.terms))
-
-            LOGGER.info("Creating training environment (backend=%s)", experiment.runtime.backend)
-            env = create_env(
+            LOGGER.info("Creating training and evaluation environments (backend=%s)", experiment.runtime.backend)
+            env, eval_env = build_train_and_eval_envs(
                 workspace_root=self.workspace_root,
                 backend_name=experiment.runtime.backend,
                 scene_path=scene_path,
@@ -100,22 +122,8 @@ class CurriculumRunner:
                 control_timestep=experiment.runtime.control_timestep,
                 physics_timestep=experiment.runtime.physics_timestep,
                 model_id=f"{current_task.task_id}_{stage_id}",
-            )
-
-            LOGGER.info("Creating evaluation environment (backend=%s)", experiment.runtime.backend)
-            eval_env = create_env(
-                workspace_root=self.workspace_root,
-                backend_name=experiment.runtime.backend,
-                scene_path=scene_path,
-                robot_spec=robot_spec,
-                task_spec=current_task,
-                reward_model=reward_model,
-                image_width=experiment.runtime.image_width,
-                image_height=experiment.runtime.image_height,
-                camera_name=experiment.runtime.camera_name,
-                control_timestep=experiment.runtime.control_timestep,
-                physics_timestep=experiment.runtime.physics_timestep,
-                model_id=f"{current_task.task_id}_{stage_id}_eval",
+                visualize=self.visualize,
+                create_env_fn=create_env,
             )
 
             algorithm = create_algorithm(experiment.training.algorithm)
@@ -125,6 +133,7 @@ class CurriculumRunner:
                 n_steps=experiment.training.n_steps,
                 batch_size=experiment.training.batch_size,
                 gamma=experiment.training.gamma,
+                algorithm_params=experiment.training.algorithm_params,
                 seed=experiment.seed,
                 verbose=1 if LOGGER.isEnabledFor(logging.INFO) else 0,
             )
@@ -165,13 +174,15 @@ class CurriculumRunner:
                 LOGGER.info("Reached configured max stages (%d), stopping", experiment.curriculum.max_stages)
                 break
 
+            promotion_threshold = current_task.promotion_threshold_reward
             should_promote = promotion_rule.should_promote(
-                all_metrics, current_task.success_threshold_reward
+                all_metrics,
+                promotion_threshold=promotion_threshold,
             )
             LOGGER.info(
-                "Promotion check | should_promote=%s | threshold_reward=%.3f",
+                "Promotion check | should_promote=%s | promotion_threshold=%.3f",
                 should_promote,
-                current_task.success_threshold_reward,
+                promotion_threshold,
             )
             if not should_promote:
                 LOGGER.info("Promotion criteria not met, stopping curriculum")
@@ -192,6 +203,8 @@ class CurriculumRunner:
             "stages_completed": len(all_metrics),
             "metrics": all_metrics,
             "output_dir": str(output_dir),
+            "backend": experiment.runtime.backend,
+            "visualize": self.visualize,
         }
         self._save_json(output_dir / "run_summary.json", summary)
         LOGGER.info("Run completed | stages_completed=%d | summary=%s", len(all_metrics), output_dir / "run_summary.json")

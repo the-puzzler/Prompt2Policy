@@ -46,6 +46,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default="configs/experiment.yaml",
         help="Path to experiment YAML",
     )
+    train_parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["native", "mcp"],
+        default=None,
+        help="Override backend from config for this run",
+    )
+    train_parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Enable real-time visualization (native viewer when backend=native)",
+    )
     _add_logging_args(train_parser)
 
     gen_parser = subparsers.add_parser("generate-stage", help="Generate next task stage")
@@ -77,6 +89,8 @@ def main() -> int:
         runner = CurriculumRunner(
             workspace_root=workspace_root,
             experiment_config_path=(workspace_root / args.experiment).resolve(),
+            backend_override=args.backend,
+            visualize=args.visualize,
         )
         summary = runner.run()
         print(json.dumps(summary, indent=2))

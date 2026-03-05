@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RuntimeConfig(BaseModel):
@@ -22,6 +22,7 @@ class TrainingConfig(BaseModel):
 
     algorithm: str = "ppo"
     total_timesteps: int = 30_000
+    algorithm_params: dict[str, Any] = Field(default_factory=dict)
     learning_rate: float = 3e-4
     n_steps: int = 1024
     batch_size: int = 64

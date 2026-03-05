@@ -38,3 +38,7 @@ class RewardSpec(BaseModel):
     terms: list[RewardTermSpec] = Field(default_factory=list)
     success_metric: Literal["distance_to_goal", "reward"] = "distance_to_goal"
     success_threshold: float = 0.05
+
+    @property
+    def termination_threshold(self) -> float:
+        return self.success_threshold

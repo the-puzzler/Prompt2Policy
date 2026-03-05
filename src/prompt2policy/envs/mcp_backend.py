@@ -12,6 +12,7 @@ import numpy as np
 from prompt2policy.envs.backend import EnvBackend
 from prompt2policy.robots.specs import RobotSpec
 from prompt2policy.world.mcp_adapter import MCPWorldAdapter
+from prompt2policy.world.specs import WorldSpec
 
 
 class MCPEnvBackend(EnvBackend):
@@ -20,6 +21,7 @@ class MCPEnvBackend(EnvBackend):
         workspace_root: Path,
         scene_path: Path,
         robot_spec: RobotSpec,
+        world_spec: WorldSpec,
         model_id: str,
         control_timestep: float = 0.02,
     ):
@@ -29,6 +31,7 @@ class MCPEnvBackend(EnvBackend):
         self.mcp.instantiate_scene(scene_path=scene_path, model_id=model_id)
 
         self._joint_count = len(robot_spec.controlled_joints)
+        self._goal_position_hint = self._extract_goal_position_hint(world_spec)
 
     def reset(self, seed: int | None = None) -> dict[str, Any]:
         del seed
@@ -89,8 +92,27 @@ class MCPEnvBackend(EnvBackend):
             info["eef_position"] = eef.tolist()
             info["goal_position"] = goal.tolist()
             info["distance_to_goal"] = float(np.linalg.norm(eef - goal))
+            return info
+
+        # Fallback when viewer state does not expose xpos.
+        qpos = np.array(state.get("qpos", []), dtype=np.float64)
+        if qpos.size >= 3 and self._goal_position_hint is not None:
+            eef = qpos[:3]
+            goal = self._goal_position_hint
+            info["eef_position"] = eef.tolist()
+            info["goal_position"] = goal.tolist()
+            info["distance_to_goal"] = float(np.linalg.norm(eef - goal))
+        elif self._goal_position_hint is not None:
+            info["goal_position"] = self._goal_position_hint.tolist()
+            info["distance_to_goal"] = float(np.linalg.norm(self._goal_position_hint))
 
         return info
 
     def close(self) -> None:
         self.mcp.close()
+
+    def _extract_goal_position_hint(self, world_spec: WorldSpec) -> np.ndarray | None:
+        for obj in world_spec.objects:
+            if obj.role == "goal":
+                return np.array(obj.pos, dtype=np.float64)
+        return None

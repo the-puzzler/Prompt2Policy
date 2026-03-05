@@ -9,33 +9,6 @@ Prompt2Policy is a modular RL training framework for MuJoCo robots that combines
 
 The current default setup is FR3 reaching with RGB + proprio observations and PPO (`MultiInputPolicy`).
 
-## Implementation Status
-
-### Implemented
-- Modular package layout under `src/prompt2policy` with clear domain boundaries.
-- Typed config/spec system with Pydantic (`ExperimentConfig`, `RobotSpec`, `TaskSpec`, `WorldSpec`, `RewardSpec`).
-- Hybrid environment architecture with backend selection (`native` MuJoCo or `mcp`).
-- FR3 default robot setup and seed reaching task.
-- Dict observation pipeline (`image` RGB 84x84 + `proprio` joint pos/vel).
-- Declarative reward DSL and runtime reward evaluator.
-- RL adapter abstraction with PPO implementation (SB3 `MultiInputPolicy`).
-- Curriculum orchestration with stage loop, artifact persistence, and rolling mean-reward promotion gate.
-- Provider-agnostic curriculum generation interface with a deterministic mock provider.
-- Fallback task generation when LLM output is invalid.
-- CLI commands for `train`, `generate-stage`, `evaluate`.
-- Structured runtime logging (`--log-level`, `-v`) for stage-by-stage visibility.
-- Unit/integration/smoke tests for core behavior.
-
-### Missing / Not Yet Implemented
-- Real LLM provider integrations (OpenAI/Anthropic/etc.); only mock provider exists in v1.
-- Additional RL algorithms behind the registry (A2C/SAC/TD3); PPO is the only implemented adapter.
-- Rich camera/vision stack features (multi-camera fusion, augmentations, temporal stacks).
-- Advanced reward terms beyond current DSL primitives (e.g., orientation, force/torque shaping, learned rewards).
-- Full MCP-driven world editing/reward modeling loop with robust schema-roundtrips to external LLMs.
-- Production-grade experiment tracking (TensorBoard/W&B integration, dashboarding, alerting).
-- Distributed or multi-process training support.
-- Full dependency bootstrap for all optional runtime paths by default (`stable-baselines3`, `gymnasium`, viewer-side MCP process) is still environment-dependent.
-
 ## Quick Start
 
 ### 1) Setup with `uv + .venv` (recommended)
@@ -148,6 +121,18 @@ Optional logging flags:
 prompt2policy train --experiment configs/experiment.yaml --log-level INFO
 prompt2policy train --experiment configs/experiment.yaml -v
 ```
+
+Train with real-time MuJoCo visualization:
+```bash
+# Training with native MuJoCo viewer
+prompt2policy train --experiment configs/experiment.yaml --visualize
+```
+
+Notes:
+- With `backend=native` (default), `--visualize` opens and syncs an in-process MuJoCo viewer.
+- With `backend=mcp`, visualization is handled by the external MCP viewer server.
+- You can explicitly override backend with `--backend native|mcp`.
+- If native viewer cannot open in your environment, the run now fails with a clear error instead of silently running headless.
 
 ### Generate Stage
 ```bash

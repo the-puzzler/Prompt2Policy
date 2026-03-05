@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,9 @@ from prompt2policy.robots.specs import RobotSpec
 from prompt2policy.world.specs import WorldSpec
 
 
+LOGGER = logging.getLogger("prompt2policy.native_backend")
+
+
 class NativeMuJoCoBackend(EnvBackend):
     def __init__(
         self,
@@ -19,6 +23,7 @@ class NativeMuJoCoBackend(EnvBackend):
         world_spec: WorldSpec,
         physics_timestep: float = 0.002,
         control_timestep: float = 0.02,
+        visualize: bool = False,
     ):
         try:
             import mujoco
@@ -31,6 +36,7 @@ class NativeMuJoCoBackend(EnvBackend):
         self.world_spec = world_spec
         self.physics_timestep = physics_timestep
         self.control_timestep = control_timestep
+        self.visualize = visualize
         self._n_substeps = max(1, int(round(self.control_timestep / self.physics_timestep)))
 
         self.model = self._load_model_with_fallback(scene_path)
@@ -47,6 +53,9 @@ class NativeMuJoCoBackend(EnvBackend):
         self._eef_site_id = self._resolve_site_id(self.robot_spec.eef_site_name)
         self._goal_body_name = self._resolve_goal_body_name(world_spec)
         self._goal_position_hint = self._resolve_goal_position_hint(world_spec)
+        self.viewer = self._create_viewer() if self.visualize else None
+        if self.visualize and self.viewer is not None:
+            LOGGER.info("Native MuJoCo viewer opened successfully")
 
     def reset(self, seed: int | None = None) -> dict[str, Any]:
         if seed is not None:
@@ -59,6 +68,7 @@ class NativeMuJoCoBackend(EnvBackend):
             self._mujoco.mj_resetDataKeyframe(self.model, self.data, home_key_id)
 
         self._mujoco.mj_forward(self.model, self.data)
+        self._sync_viewer()
         return self.get_info()
 
     def step(self, action: np.ndarray) -> dict[str, Any]:
@@ -84,6 +94,7 @@ class NativeMuJoCoBackend(EnvBackend):
 
         for _ in range(self._n_substeps):
             self._mujoco.mj_step(self.model, self.data)
+            self._sync_viewer()
 
         return self.get_info()
 
@@ -135,6 +146,12 @@ class NativeMuJoCoBackend(EnvBackend):
         return info
 
     def close(self) -> None:
+        if self.viewer is not None:
+            try:
+                self.viewer.close()
+            except Exception:
+                pass
+            self.viewer = None
         if self.renderer is not None:
             self.renderer.close()
             self.renderer = None
@@ -197,3 +214,30 @@ class NativeMuJoCoBackend(EnvBackend):
             if not fallback_scene.is_absolute():
                 fallback_scene = (Path.cwd() / fallback_scene).resolve()
             return self._mujoco.MjModel.from_xml_path(str(fallback_scene))
+
+    def _create_viewer(self):
+        try:
+            import mujoco.viewer
+
+            return mujoco.viewer.launch_passive(self.model, self.data)
+        except Exception as exc:
+            raise RuntimeError(
+                "Visualization requested but native MuJoCo viewer failed to open. "
+                "If you are on macOS, try launching with mjpython, or use "
+                "'--backend mcp' with an external viewer server."
+            ) from exc
+
+    def _sync_viewer(self) -> None:
+        if self.viewer is None:
+            return
+        try:
+            with self.viewer.lock():
+                pass
+            self.viewer.sync()
+        except Exception as exc:
+            LOGGER.warning("Viewer sync failed, disabling live viewer: %s", exc)
+            try:
+                self.viewer.close()
+            except Exception:
+                pass
+            self.viewer = None

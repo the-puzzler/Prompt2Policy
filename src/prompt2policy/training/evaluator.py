@@ -5,8 +5,7 @@ from pathlib import Path
 from prompt2policy.algorithms.ppo_adapter import PPOAdapter
 from prompt2policy.config.loader import load_robot_spec, load_task_spec
 from prompt2policy.envs.factory import create_env
-from prompt2policy.rewards.model import compile_reward_model
-from prompt2policy.world.builder import WorldBuilder
+from prompt2policy.training.runtime_factory import build_scene_and_reward, build_single_env
 
 
 def evaluate_checkpoint(
@@ -21,17 +20,15 @@ def evaluate_checkpoint(
     robot_spec = load_robot_spec(robot_config_path)
     task_spec = load_task_spec(task_path)
 
-    reward_model = compile_reward_model(task_spec.reward_spec)
-    world_builder = WorldBuilder(workspace_root=workspace_root)
-
     output_scene = workspace_root / ".tmp_eval" / "scene.xml"
-    scene_path = world_builder.compose_scene(
-        world_spec=task_spec.world_spec,
-        output_path=output_scene,
-        default_camera=robot_spec.camera_defaults[0],
+    scene_path, reward_model = build_scene_and_reward(
+        workspace_root=workspace_root,
+        output_scene_path=output_scene,
+        robot_spec=robot_spec,
+        task_spec=task_spec,
     )
 
-    env = create_env(
+    env = build_single_env(
         workspace_root=workspace_root,
         backend_name=backend_name,
         scene_path=scene_path,
@@ -44,6 +41,7 @@ def evaluate_checkpoint(
         control_timestep=0.02,
         physics_timestep=0.002,
         model_id="eval_model",
+        create_env_fn=create_env,
     )
 
     adapter = PPOAdapter.load(str(checkpoint_path), env=env)

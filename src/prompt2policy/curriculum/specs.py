@@ -18,3 +18,7 @@ class TaskSpec(BaseModel):
     success_threshold_reward: float = 50.0
     max_episode_steps: int = 300
     eval_episodes: int = 5
+
+    @property
+    def promotion_threshold_reward(self) -> float:
+        return self.success_threshold_reward
