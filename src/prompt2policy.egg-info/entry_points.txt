@@ -1,0 +1,2 @@
+[console_scripts]
+prompt2policy = prompt2policy.cli.__main__:main

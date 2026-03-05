@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prompt2policy"
+version = "0.1.0"
+description = "Curriculum RL orchestration for MuJoCo robots with LLM-generated tasks"
+readme = "readme.md"
+requires-python = ">=3.10"
+authors = [{name = "Prompt2Policy"}]
+dependencies = [
+  "mujoco>=2.3.0",
+  "gymnasium>=0.29.0",
+  "stable-baselines3>=2.0.0",
+  "torch>=2.0.0",
+  "pydantic>=2.6.0",
+  "PyYAML>=6.0",
+  "numpy>=1.24.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=5.0.0"
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=5.0.0"
+]
+
+[project.scripts]
+prompt2policy = "prompt2policy.cli.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true
+default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+  "integration: integration tests for composed subsystems",
+  "smoke: lightweight end-to-end regression checks"
+]

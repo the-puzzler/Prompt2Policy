@@ -1,0 +1,17 @@
+# Python environments
+.venv/
+venv/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local runs/artifacts
+runs/
+.tmp_test/
+.tmp_eval/
+.tmp_inspect/
+
+# macOS
+.DS_Store

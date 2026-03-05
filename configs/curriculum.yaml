@@ -1,0 +1,5 @@
+max_stages: 1
+promotion_window_size: 3
+fallback_difficulty_increment: 0.1
+llm_provider: mock
+force_invalid_llm_output: false

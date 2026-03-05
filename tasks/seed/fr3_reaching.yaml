@@ -1,0 +1,40 @@
+task_id: fr3_reaching_seed
+parent_task_id: null
+difficulty_level: 1.0
+goal_description: Reach the green target sphere using FR3 end effector.
+world_spec:
+  base_scene: mujoco_menagerie/franka_fr3/scene.xml
+  objects:
+    - name: goal_sphere
+      shape: sphere
+      size: [0.03]
+      pos: [0.55, 0.0, 0.45]
+      rgba: [0.2, 0.9, 0.2, 1.0]
+      role: goal
+  cameras:
+    - name: third_person
+      pos: [1.2, -1.2, 0.9]
+      quat: [0.856, 0.217, 0.372, 0.274]
+      fovy: 45.0
+      width: 84
+      height: 84
+  mcp_override_payload: null
+reward_spec:
+  terms:
+    - type: distance
+      weight: 3.0
+      target: goal_sphere
+    - type: action_l2
+      weight: 0.01
+    - type: time_penalty
+      weight: 0.02
+      value: -1.0
+    - type: goal_bonus
+      weight: 10.0
+      target: goal_sphere
+      threshold: 0.06
+  success_metric: distance_to_goal
+  success_threshold: 0.06
+success_threshold_reward: -5.0
+max_episode_steps: 300
+eval_episodes: 3

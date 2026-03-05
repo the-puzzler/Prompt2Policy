@@ -1,0 +1,60 @@
+Metadata-Version: 2.4
+Name: prompt2policy
+Version: 0.1.0
+Summary: Curriculum RL orchestration for MuJoCo robots with LLM-generated tasks
+Author: Prompt2Policy
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: mujoco>=2.3.0
+Requires-Dist: gymnasium>=0.29.0
+Requires-Dist: stable-baselines3>=2.0.0
+Requires-Dist: torch>=2.0.0
+Requires-Dist: pydantic>=2.6.0
+Requires-Dist: PyYAML>=6.0
+Requires-Dist: numpy>=1.24.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0.0; extra == "dev"
+
+## P2P - Prompt To Policy
+
+### Quick Start
+
+1. Create and install into a virtual environment (uv + venv):
+
+```bash
+./scripts/bootstrap_uv_venv.sh
+source .venv/bin/activate
+```
+
+2. Run one-stage FR3 curriculum training:
+
+```bash
+prompt2policy train --experiment configs/experiment.yaml
+```
+
+### Alternative Setup (python venv + pip)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### uv Commands
+
+```bash
+# Create venv and install project + dev extras
+uv venv .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
+
+# Run without manual activation
+uv run prompt2policy train --experiment configs/experiment.yaml
+```
+
+### CLI Commands
+
+- `prompt2policy train --experiment <path>`
+- `prompt2policy generate-stage --previous-task <path> --output <path> --mean-reward <value>`
+- `prompt2policy evaluate --checkpoint <path> --robot-config <path> --task <path>`

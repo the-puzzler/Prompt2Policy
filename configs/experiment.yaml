@@ -1,0 +1,25 @@
+name: prompt2policy_fr3_seed
+seed: 7
+robot_config_path: configs/robot_fr3.yaml
+seed_task_path: tasks/seed/fr3_reaching.yaml
+runtime:
+  backend: native
+  output_dir: runs/fr3_seed
+  camera_name: third_person
+  image_width: 84
+  image_height: 84
+  physics_timestep: 0.002
+  control_timestep: 0.02
+training:
+  algorithm: ppo
+  total_timesteps: 2000
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 64
+  gamma: 0.99
+curriculum:
+  max_stages: 1
+  promotion_window_size: 3
+  fallback_difficulty_increment: 0.1
+  llm_provider: mock
+  force_invalid_llm_output: false
