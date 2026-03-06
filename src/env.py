@@ -17,10 +17,10 @@ IMG_WIDTH = 64
 IMG_HEIGHT = 64
 
 # Workspace bounds for target randomization (reachable front workspace)
-TARGET_LOW = np.array([0.2, -0.4, 0.1])
-TARGET_HIGH = np.array([0.65, 0.4, 0.7])
-TARGET_RADIUS_MIN = 0.25  # min distance from base (avoid too close)
-TARGET_RADIUS_MAX = 0.75  # max distance from base (avoid unreachable)
+TARGET_LOW = np.array([0.2, -0.3, 0.15])
+TARGET_HIGH = np.array([0.55, 0.3, 0.6])
+TARGET_RADIUS_MIN = 0.3   # min distance from base (avoid too close)
+TARGET_RADIUS_MAX = 0.6   # max distance from base (avoid unreachable)
 
 MAX_EPISODE_STEPS = 200
 
