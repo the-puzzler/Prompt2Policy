@@ -1,4 +1,4 @@
-"""Training script for FR3 reach task with PPO + MultiInputPolicy."""
+"""Training script for FR3 reach task with PPO and EE-direction actions."""
 
 import argparse
 import torch
@@ -6,7 +6,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor, VecTransposeImage
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 
-from env import FrankaReachEnv
+from env_ee_direction import FrankaReachEEDirectionEnv
 from ppo_config import PPO_PARAMS
 
 
@@ -20,9 +20,10 @@ class RenderCallback(BaseCallback):
 
 def make_env(seed, render_mode=None):
     def _init():
-        env = FrankaReachEnv(render_mode=render_mode)
+        env = FrankaReachEEDirectionEnv(render_mode=render_mode)
         env.reset(seed=seed)
         return env
+
     return _init
 
 
@@ -31,7 +32,7 @@ def main():
     parser.add_argument("--total-timesteps", type=int, default=1_000_000)
     parser.add_argument("--n-envs", type=int, default=4)
     parser.add_argument("--eval-freq", type=int, default=10_000)
-    parser.add_argument("--save-path", type=str, default="./runs/fr3_reach")
+    parser.add_argument("--save-path", type=str, default="./runs/fr3_reach_ee_direction")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--vec-env", type=str, default="subproc", choices=["subproc", "dummy"])
@@ -67,7 +68,6 @@ def main():
         train_envs = VecMonitor(DummyVecEnv(env_fns))
     print(f"Vectorized env type: {vec_env_type} (n_envs={args.n_envs})")
 
-    # Eval env (VecTransposeImage to match training env wrapping)
     eval_env = VecTransposeImage(VecMonitor(DummyVecEnv([make_env(args.seed + 100)])))
 
     model = PPO(
