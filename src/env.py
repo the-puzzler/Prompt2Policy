@@ -13,8 +13,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENE_XML = os.path.join(PROJECT_ROOT, "envs", "reach_scene.xml")
 
 # Camera image dimensions
-IMG_WIDTH = 64
-IMG_HEIGHT = 64
+IMG_WIDTH = 128
+IMG_HEIGHT = 128
 
 # Workspace bounds for target randomization (reachable front workspace)
 TARGET_LOW = np.array([0.2, -0.3, 0.15])

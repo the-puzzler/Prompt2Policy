@@ -80,7 +80,7 @@ def main() -> None:
     parser.add_argument(
         "--model-path",
         type=str,
-        default="./runs/fr3_reach/final_model.zip",
+        default="./runs/fr3_reach/best/best_model.zip",
         help="Path to saved SB3 PPO model .zip",
     )
     parser.add_argument(
