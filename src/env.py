@@ -55,6 +55,11 @@ class FrankaReachEnv(gym.Env):
         self.joint_names = [f"fr3_joint{i+1}" for i in range(self.n_joints)]
         self.joint_ids = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, n) for n in self.joint_names]
         self.actuator_ids = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in self.joint_names]
+        self.joint_qpos_adr = np.array([self.model.jnt_qposadr[jid] for jid in self.joint_ids], dtype=np.int32)
+        self.joint_qvel_adr = np.array([self.model.jnt_dofadr[jid] for jid in self.joint_ids], dtype=np.int32)
+        self.joint_low = self.model.jnt_range[self.joint_ids, 0].copy()
+        self.joint_high = self.model.jnt_range[self.joint_ids, 1].copy()
+        self.actuator_ids_np = np.array(self.actuator_ids, dtype=np.int32)
 
         # EE site
         self.ee_site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "attachment_site")
@@ -95,10 +100,10 @@ class FrankaReachEnv(gym.Env):
         return self._offscreen_renderer
 
     def _get_joint_qpos(self):
-        return np.array([self.data.qpos[self.model.jnt_qposadr[jid]] for jid in self.joint_ids])
+        return self.data.qpos[self.joint_qpos_adr].copy()
 
     def _get_joint_qvel(self):
-        return np.array([self.data.qvel[self.model.jnt_dofadr[jid]] for jid in self.joint_ids])
+        return self.data.qvel[self.joint_qvel_adr].copy()
 
     def _get_ee_pos(self):
         return self.data.site_xpos[self.ee_site_id].copy()
@@ -153,17 +158,10 @@ class FrankaReachEnv(gym.Env):
 
         # Apply delta to current joint targets
         current_qpos = self._get_joint_qpos()
-        target_qpos = current_qpos + delta
-
-        # Clip to joint limits
-        for i, jid in enumerate(self.joint_ids):
-            lo = self.model.jnt_range[jid, 0]
-            hi = self.model.jnt_range[jid, 1]
-            target_qpos[i] = np.clip(target_qpos[i], lo, hi)
+        target_qpos = np.clip(current_qpos + delta, self.joint_low, self.joint_high)
 
         # Set actuator controls (position targets)
-        for i, aid in enumerate(self.actuator_ids):
-            self.data.ctrl[aid] = target_qpos[i]
+        self.data.ctrl[self.actuator_ids_np] = target_qpos
 
         # Step simulation
         for _ in range(self.n_substeps):

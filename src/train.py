@@ -85,8 +85,8 @@ def main():
         eval_env,
         best_model_save_path=f"{args.save_path}/best",
         log_path=f"{args.save_path}/eval",
-        eval_freq=args.eval_freq // args.n_envs,
-        n_eval_episodes=10,
+        eval_freq=max(args.eval_freq // args.n_envs, 1),
+        n_eval_episodes=3,
         deterministic=True,
     )
 
