@@ -75,6 +75,21 @@ def resize_for_model_input(frame: np.ndarray, out_w: int, out_h: int) -> np.ndar
     return resize_frame_nearest(frame, out_w, out_h)
 
 
+def make_side_by_side_frame(
+    human_frame: np.ndarray,
+    model_source_frame: np.ndarray,
+    pane_w: int,
+    pane_h: int,
+    model_w: int,
+    model_h: int,
+) -> np.ndarray:
+    """Compose left=human view and right=model input view into one frame."""
+    left = resize_frame_nearest(human_frame, pane_w, pane_h)
+    model_native = resize_for_model_input(model_source_frame, model_w, model_h)
+    right = resize_frame_nearest(model_native, pane_w, pane_h)
+    return np.concatenate([left, right], axis=1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -139,16 +154,23 @@ def main() -> None:
             done = False
             steps = 0
 
-            frame = resize_frame_nearest(np.asarray(obs["image"], dtype=np.uint8), args.width, args.height)
+            obs_image = np.asarray(obs["image"], dtype=np.uint8)
+            frame = make_side_by_side_frame(
+                human_frame=obs_image,
+                model_source_frame=obs_image,
+                pane_w=args.width,
+                pane_h=args.height,
+                model_w=model_img_w,
+                model_h=model_img_h,
+            )
             writer.append_data(frame)
             frame_count += 1
 
             while not done and steps < args.max_steps:
+                obs_image = np.asarray(obs["image"], dtype=np.uint8)
                 obs_for_model = {
                     **obs,
-                    "image": resize_for_model_input(
-                        np.asarray(obs["image"], dtype=np.uint8), model_img_w, model_img_h
-                    ),
+                    "image": resize_for_model_input(obs_image, model_img_w, model_img_h),
                 }
                 model_obs = adapt_obs_for_model(obs_for_model, model)
                 action, _ = model.predict(model_obs, deterministic=not args.stochastic)
@@ -157,7 +179,15 @@ def main() -> None:
                 done = bool(terminated or truncated)
                 steps += 1
 
-                frame = resize_frame_nearest(np.asarray(obs["image"], dtype=np.uint8), args.width, args.height)
+                next_obs_image = np.asarray(obs["image"], dtype=np.uint8)
+                frame = make_side_by_side_frame(
+                    human_frame=next_obs_image,
+                    model_source_frame=next_obs_image,
+                    pane_w=args.width,
+                    pane_h=args.height,
+                    model_w=model_img_w,
+                    model_h=model_img_h,
+                )
                 writer.append_data(frame)
                 frame_count += 1
 
@@ -175,7 +205,8 @@ def main() -> None:
     print(f"\nSaved video: {output_path}")
     print(f"Loaded model: {model_path}")
     print(f"Policy obs image size: {model_img_w}x{model_img_h}")
-    print(f"Video size: {args.width}x{args.height}")
+    print(f"Video pane size (each view): {args.width}x{args.height}")
+    print(f"Final video size: {args.width * 2}x{args.height} (left=human, right=model)")
     print(f"Frames: {frame_count}")
     print(f"Episodes: {args.episodes}")
     print(f"Mean episode reward: {mean_reward:.3f}")
