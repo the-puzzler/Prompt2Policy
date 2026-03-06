@@ -79,7 +79,7 @@ class FrankaReachEnv(gym.Env):
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(self.n_joints,), dtype=np.float32)
 
         # Observation
-        state_dim = self.n_joints * 2 + 3 + 3  # qpos + qvel + ee_pos + target_pos
+        state_dim = self.n_joints * 2 + 3  # qpos + qvel + ee_pos
         self.observation_space = spaces.Dict({
             "state": spaces.Box(low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32),
             "image": spaces.Box(low=0, high=255, shape=(self.img_height, self.img_width, 3), dtype=np.uint8),
@@ -124,9 +124,8 @@ class FrankaReachEnv(gym.Env):
         qpos = self._get_joint_qpos()
         qvel = self._get_joint_qvel()
         ee_pos = self._get_ee_pos()
-        target_pos = self._get_target_pos()
 
-        state = np.concatenate([qpos, qvel, ee_pos, target_pos]).astype(np.float32)
+        state = np.concatenate([qpos, qvel, ee_pos]).astype(np.float32)
 
         # Render camera image
         renderer = self._get_renderer()
