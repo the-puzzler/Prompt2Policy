@@ -37,9 +37,11 @@ class FrankaReachEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "rgb_array"]}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, img_width: int = IMG_WIDTH, img_height: int = IMG_HEIGHT):
         super().__init__()
         self.render_mode = render_mode
+        self.img_width = int(img_width)
+        self.img_height = int(img_height)
 
         # Load MuJoCo model
         self.model = mujoco.MjModel.from_xml_path(SCENE_XML)
@@ -75,7 +77,7 @@ class FrankaReachEnv(gym.Env):
         state_dim = self.n_joints * 2 + 3 + 3  # qpos + qvel + ee_pos + target_pos
         self.observation_space = spaces.Dict({
             "state": spaces.Box(low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32),
-            "image": spaces.Box(low=0, high=255, shape=(IMG_HEIGHT, IMG_WIDTH, 3), dtype=np.uint8),
+            "image": spaces.Box(low=0, high=255, shape=(self.img_height, self.img_width, 3), dtype=np.uint8),
         })
 
         # Home position from keyframe
@@ -85,7 +87,11 @@ class FrankaReachEnv(gym.Env):
 
     def _get_renderer(self):
         if self._offscreen_renderer is None:
-            self._offscreen_renderer = mujoco.Renderer(self.model, height=IMG_HEIGHT, width=IMG_WIDTH)
+            self._offscreen_renderer = mujoco.Renderer(
+                self.model,
+                height=self.img_height,
+                width=self.img_width,
+            )
         return self._offscreen_renderer
 
     def _get_joint_qpos(self):

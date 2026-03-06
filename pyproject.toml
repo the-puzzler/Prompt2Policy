@@ -11,4 +11,5 @@ dependencies = [
     "tensorboard",
     "glfw",
     "pyopengl",
+    "imageio>=2.37.2",
 ]
