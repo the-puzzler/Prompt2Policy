@@ -10,7 +10,7 @@ from reward import compute_reward
 from viewer import MujocoViewer
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCENE_XML = os.path.join(PROJECT_ROOT, "mujoco_menagerie", "franka_fr3", "reach_scene.xml")
+SCENE_XML = os.path.join(PROJECT_ROOT, "envs", "reach_scene.xml")
 
 # Camera image dimensions
 IMG_WIDTH = 64
