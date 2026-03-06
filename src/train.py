@@ -30,7 +30,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--total-timesteps", type=int, default=1_000_000)
     parser.add_argument("--n-envs", type=int, default=4)
-    parser.add_argument("--eval-freq", type=int, default=10_000)
+    parser.add_argument("--eval-freq", type=int, default=25_000)
     parser.add_argument("--save-path", type=str, default="./runs/fr3_reach")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
@@ -86,7 +86,7 @@ def main():
         best_model_save_path=f"{args.save_path}/best",
         log_path=f"{args.save_path}/eval",
         eval_freq=max(args.eval_freq // args.n_envs, 1),
-        n_eval_episodes=3,
+        n_eval_episodes=10,
         deterministic=True,
     )
 
