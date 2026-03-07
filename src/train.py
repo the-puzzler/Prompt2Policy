@@ -7,7 +7,13 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMoni
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 
 from env import FrankaReachEnv
+from explore_env import FrankaExploreEnv
 from ppo_config import PPO_PARAMS
+
+ENV_CLASSES = {
+    "reach": FrankaReachEnv,
+    "explore": FrankaExploreEnv,
+}
 
 
 class RenderCallback(BaseCallback):
@@ -18,9 +24,9 @@ class RenderCallback(BaseCallback):
         return True
 
 
-def make_env(seed, render_mode=None):
+def make_env(seed, render_mode=None, env_cls=FrankaReachEnv):
     def _init():
-        env = FrankaReachEnv(render_mode=render_mode)
+        env = env_cls(render_mode=render_mode)
         env.reset(seed=seed)
         return env
     return _init
@@ -36,7 +42,10 @@ def main():
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--vec-env", type=str, default="subproc", choices=["subproc", "dummy"])
     parser.add_argument("--render", action="store_true", help="Open MuJoCo viewer from the camera POV during training")
+    parser.add_argument("--env", type=str, default="reach", choices=list(ENV_CLASSES.keys()), help="Environment to train on")
     args = parser.parse_args()
+
+    env_cls = ENV_CLASSES[args.env]
 
     cuda_available = torch.cuda.is_available()
     if args.device == "auto":
@@ -55,7 +64,7 @@ def main():
         print(f"CUDA device 0: {torch.cuda.get_device_name(0)}")
 
     rm = "human" if args.render else None
-    env_fns = [make_env(args.seed + i, render_mode=rm) for i in range(args.n_envs)]
+    env_fns = [make_env(args.seed + i, render_mode=rm, env_cls=env_cls) for i in range(args.n_envs)]
     vec_env_type = args.vec_env
     if args.render and vec_env_type == "subproc":
         print("Render mode requires in-process envs. Switching vec env from subproc to dummy.")
@@ -68,7 +77,7 @@ def main():
     print(f"Vectorized env type: {vec_env_type} (n_envs={args.n_envs})")
 
     # Eval env (VecTransposeImage to match training env wrapping)
-    eval_env = VecTransposeImage(VecMonitor(DummyVecEnv([make_env(args.seed + 100)])))
+    eval_env = VecTransposeImage(VecMonitor(DummyVecEnv([make_env(args.seed + 100, env_cls=env_cls)])))
 
     model = PPO(
         "MultiInputPolicy",

@@ -9,12 +9,13 @@ from OpenGL.GL import glReadPixels, GL_RGB, GL_UNSIGNED_BYTE
 class MujocoViewer:
     """Opens a GLFW window rendering the MuJoCo scene from a named camera."""
 
-    def __init__(self, model, data, camera_id, width=640, height=480, title="MuJoCo Viewer"):
+    def __init__(self, model, data, camera_id, width=640, height=480, title="MuJoCo Viewer", scene_callback=None):
         self.model = model
         self.data = data
         self.camera_id = camera_id
         self.width = width
         self.height = height
+        self._scene_callback = scene_callback
 
         if not glfw.init():
             raise RuntimeError("Failed to initialize GLFW")
@@ -55,6 +56,8 @@ class MujocoViewer:
         # Update scene and render
         mujoco.mjv_updateScene(self.model, self.data, self.opt, None, self.cam,
                                mujoco.mjtCatBit.mjCAT_ALL, self.scene)
+        if self._scene_callback is not None:
+            self._scene_callback(self.scene)
         mujoco.mjr_render(self.viewport, self.scene, self.context)
 
         glfw.swap_buffers(self.window)

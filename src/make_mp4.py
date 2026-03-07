@@ -10,6 +10,12 @@ import numpy as np
 from stable_baselines3 import PPO
 
 from env import FrankaReachEnv, MAX_EPISODE_STEPS
+from explore_env import FrankaExploreEnv
+
+ENV_CLASSES = {
+    "reach": FrankaReachEnv,
+    "explore": FrankaExploreEnv,
+}
 
 
 def resolve_model_path(raw_path: str) -> str:
@@ -127,6 +133,13 @@ def main() -> None:
         action="store_true",
         help="Use stochastic policy actions (default is deterministic)",
     )
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="reach",
+        choices=list(ENV_CLASSES.keys()),
+        help="Environment type",
+    )
     args = parser.parse_args()
 
     output_path = Path(args.output)
@@ -136,7 +149,8 @@ def main() -> None:
     model = PPO.load(model_path, device=args.device)
 
     model_img_w, model_img_h = infer_env_image_size(model)
-    env = FrankaReachEnv(
+    env_cls = ENV_CLASSES[args.env]
+    env = env_cls(
         render_mode="rgb_array",
         img_width=max(args.width, model_img_w),
         img_height=max(args.height, model_img_h),
@@ -155,8 +169,12 @@ def main() -> None:
             steps = 0
 
             obs_image = np.asarray(obs["image"], dtype=np.uint8)
+            # Human view: env.render() includes overlays (e.g. grid); falls back to obs image
+            human_frame = env.render()
+            if human_frame is None:
+                human_frame = obs_image
             frame = make_side_by_side_frame(
-                human_frame=obs_image,
+                human_frame=human_frame,
                 model_source_frame=obs_image,
                 pane_w=args.width,
                 pane_h=args.height,
@@ -180,8 +198,11 @@ def main() -> None:
                 steps += 1
 
                 next_obs_image = np.asarray(obs["image"], dtype=np.uint8)
+                human_frame = env.render()
+                if human_frame is None:
+                    human_frame = next_obs_image
                 frame = make_side_by_side_frame(
-                    human_frame=next_obs_image,
+                    human_frame=human_frame,
                     model_source_frame=next_obs_image,
                     pane_w=args.width,
                     pane_h=args.height,

@@ -1,0 +1,289 @@
+"""Gymnasium environment for Franka FR3 exploration task.
+
+The workspace is divided into a coarse 3D grid. Each new cell the
+end-effector enters gives +1 reward. The goal is to visit as many
+cells as possible within one episode.
+
+The grid is visualized in render() but never shown in the robot's
+observation camera.
+"""
+
+import os
+import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+import mujoco
+
+from viewer import MujocoViewer
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCENE_XML = os.path.join(PROJECT_ROOT, "envs", "explore_scene.xml")
+
+IMG_WIDTH = 128
+IMG_HEIGHT = 128
+MAX_EPISODE_STEPS = 300  # 6 seconds at 20ms/step
+
+# Grid workspace bounds (reachable volume for the FR3 end-effector)
+GRID_LOW = np.array([0.0, -0.4, 0.0])
+GRID_HIGH = np.array([0.6, 0.4, 0.7])
+CELL_SIZE = 0.15  # 15 cm cells -> 4x6x5 = 120 cells
+
+
+class FrankaExploreEnv(gym.Env):
+    """FR3 exploration: visit as many workspace grid cells as possible."""
+
+    metadata = {"render_modes": ["human", "rgb_array"]}
+
+    def __init__(
+        self,
+        render_mode=None,
+        img_width: int = IMG_WIDTH,
+        img_height: int = IMG_HEIGHT,
+        cell_size: float = CELL_SIZE,
+    ):
+        super().__init__()
+        self.render_mode = render_mode
+        self.img_width = int(img_width)
+        self.img_height = int(img_height)
+        self.cell_size = cell_size
+
+        # Load MuJoCo model
+        self.model = mujoco.MjModel.from_xml_path(SCENE_XML)
+        self.data = mujoco.MjData(self.model)
+
+        self.model.opt.timestep = 0.002
+        self.n_substeps = 10  # 20 ms per step
+
+        # Joint info
+        self.n_joints = 7
+        self.joint_names = [f"fr3_joint{i+1}" for i in range(self.n_joints)]
+        self.joint_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, n)
+            for n in self.joint_names
+        ]
+        self.actuator_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, n)
+            for n in self.joint_names
+        ]
+        self.joint_qpos_adr = np.array(
+            [self.model.jnt_qposadr[jid] for jid in self.joint_ids], dtype=np.int32
+        )
+        self.joint_qvel_adr = np.array(
+            [self.model.jnt_dofadr[jid] for jid in self.joint_ids], dtype=np.int32
+        )
+        self.joint_low = self.model.jnt_range[self.joint_ids, 0].copy()
+        self.joint_high = self.model.jnt_range[self.joint_ids, 1].copy()
+        self.actuator_ids_np = np.array(self.actuator_ids, dtype=np.int32)
+
+        # EE site
+        self.ee_site_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_SITE, "attachment_site"
+        )
+
+        # Camera
+        self.camera_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_CAMERA, "front_camera"
+        )
+
+        # Lazy-init renderers (OpenGL context can't survive subprocess pickling)
+        self._offscreen_renderer = None
+        self._vis_renderer = None
+        self._viewer = None
+
+        # Action: delta joint positions, scaled
+        self.action_scale = 0.1
+        self.action_space = spaces.Box(
+            low=-1.0, high=1.0, shape=(self.n_joints,), dtype=np.float32
+        )
+
+        # Grid setup
+        self.grid_low = GRID_LOW.copy()
+        self.grid_high = GRID_HIGH.copy()
+        self.grid_dims = np.ceil(
+            (self.grid_high - self.grid_low) / self.cell_size
+        ).astype(int)
+        self.total_cells = int(np.prod(self.grid_dims))
+        self.visited = np.zeros(self.grid_dims, dtype=bool)
+
+        # Observation: state + image (image is clean, no grid overlay)
+        state_dim = self.n_joints * 2 + 3  # qpos + qvel + ee_pos
+        self.observation_space = spaces.Dict(
+            {
+                "state": spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32
+                ),
+                "image": spaces.Box(
+                    low=0,
+                    high=255,
+                    shape=(self.img_height, self.img_width, 3),
+                    dtype=np.uint8,
+                ),
+            }
+        )
+
+        # Home position
+        self.home_qpos = np.array([0, 0, 0, -1.57079, 0, 1.57079, -0.7853])
+        self._step_count = 0
+
+    # -- Renderers ----------------------------------------------------------
+
+    def _get_renderer(self):
+        if self._offscreen_renderer is None:
+            self._offscreen_renderer = mujoco.Renderer(
+                self.model, height=self.img_height, width=self.img_width
+            )
+        return self._offscreen_renderer
+
+    def _get_vis_renderer(self):
+        if self._vis_renderer is None:
+            self._vis_renderer = mujoco.Renderer(
+                self.model, height=self.img_height, width=self.img_width
+            )
+        return self._vis_renderer
+
+    # -- Helpers ------------------------------------------------------------
+
+    def _get_joint_qpos(self):
+        return self.data.qpos[self.joint_qpos_adr].copy()
+
+    def _get_joint_qvel(self):
+        return self.data.qvel[self.joint_qvel_adr].copy()
+
+    def _get_ee_pos(self):
+        return self.data.site_xpos[self.ee_site_id].copy()
+
+    def _ee_to_grid(self, ee_pos):
+        """Convert EE position to grid cell indices, or None if outside."""
+        if np.any(ee_pos < self.grid_low) or np.any(ee_pos >= self.grid_high):
+            return None
+        idx = ((ee_pos - self.grid_low) / self.cell_size).astype(int)
+        return tuple(np.clip(idx, 0, self.grid_dims - 1))
+
+    # -- Grid visualization -------------------------------------------------
+
+    def _add_grid_vis(self, scene):
+        """Add translucent cubes for visited cells to a MjvScene."""
+        half = self.cell_size / 2
+        size = np.array([half, half, half])
+        mat = np.eye(3).flatten()
+        rgba = np.array([0.2, 0.8, 0.2, 0.25], dtype=np.float32)
+
+        for idx in zip(*np.where(self.visited)):
+            if scene.ngeom >= scene.maxgeom:
+                break
+            pos = self.grid_low + (np.array(idx) + 0.5) * self.cell_size
+            mujoco.mjv_initGeom(
+                scene.geoms[scene.ngeom],
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=size,
+                pos=pos,
+                mat=mat,
+                rgba=rgba,
+            )
+            scene.ngeom += 1
+
+    # -- Observation --------------------------------------------------------
+
+    def _get_obs(self):
+        qpos = self._get_joint_qpos()
+        qvel = self._get_joint_qvel()
+        ee_pos = self._get_ee_pos()
+
+        state = np.concatenate([qpos, qvel, ee_pos]).astype(np.float32)
+
+        # Clean render — robot never sees the grid
+        renderer = self._get_renderer()
+        renderer.update_scene(self.data, camera=self.camera_id)
+        image = renderer.render()
+
+        return {"state": state, "image": image}
+
+    # -- Core env methods ---------------------------------------------------
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        mujoco.mj_resetData(self.model, self.data)
+
+        # Randomize start config, rejecting if EE lands outside the grid
+        while True:
+            random_qpos = self.np_random.uniform(self.joint_low, self.joint_high)
+            for i, jid in enumerate(self.joint_ids):
+                self.data.qpos[self.model.jnt_qposadr[jid]] = random_qpos[i]
+            mujoco.mj_forward(self.model, self.data)
+            if self._ee_to_grid(self._get_ee_pos()) is not None:
+                break
+        for i in range(self.n_joints):
+            self.data.ctrl[self.actuator_ids[i]] = random_qpos[i]
+        self._step_count = 0
+
+        # Reset grid
+        self.visited[:] = False
+        cell = self._ee_to_grid(self._get_ee_pos())
+        if cell is not None:
+            self.visited[cell] = True
+
+        return self._get_obs(), {}
+
+    def step(self, action):
+        action = np.clip(action, -1.0, 1.0)
+        delta = action * self.action_scale
+
+        current_qpos = self._get_joint_qpos()
+        target_qpos = np.clip(current_qpos + delta, self.joint_low, self.joint_high)
+        self.data.ctrl[self.actuator_ids_np] = target_qpos
+
+        for _ in range(self.n_substeps):
+            mujoco.mj_step(self.model, self.data)
+
+        self._step_count += 1
+
+        # Exploration reward: +1 for each new cell visited
+        ee_pos = self._get_ee_pos()
+        cell = self._ee_to_grid(ee_pos)
+        reward = 0.0
+        if cell is not None and not self.visited[cell]:
+            self.visited[cell] = True
+            reward = 1.0
+
+        n_visited = int(self.visited.sum())
+        coverage = n_visited / self.total_cells
+
+        terminated = False
+        truncated = self._step_count >= MAX_EPISODE_STEPS
+        info = {
+            "cells_visited": n_visited,
+            "coverage": coverage,
+        }
+
+        obs = self._get_obs()
+        return obs, reward, terminated, truncated, info
+
+    # -- Rendering ----------------------------------------------------------
+
+    def render(self):
+        if self.render_mode == "human":
+            if self._viewer is None:
+                self._viewer = MujocoViewer(
+                    self.model,
+                    self.data,
+                    self.camera_id,
+                    title="FR3 Explore",
+                    scene_callback=self._add_grid_vis,
+                )
+            self._viewer.sync()
+        elif self.render_mode == "rgb_array":
+            renderer = self._get_vis_renderer()
+            renderer.update_scene(self.data, camera=self.camera_id)
+            self._add_grid_vis(renderer.scene)
+            return renderer.render()
+
+    def close(self):
+        if self._offscreen_renderer is not None:
+            self._offscreen_renderer.close()
+            self._offscreen_renderer = None
+        if self._vis_renderer is not None:
+            self._vis_renderer.close()
+            self._vis_renderer = None
+        if self._viewer is not None:
+            self._viewer.close()
+            self._viewer = None
