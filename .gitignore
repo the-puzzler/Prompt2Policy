@@ -1,4 +1,5 @@
 src/runs/
+mujoco_menagerie/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

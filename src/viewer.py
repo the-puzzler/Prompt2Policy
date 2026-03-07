@@ -26,6 +26,8 @@ class MujocoViewer:
             raise RuntimeError("Failed to create GLFW window")
 
         glfw.make_context_current(self.window)
+        glfw.show_window(self.window)
+        glfw.focus_window(self.window)
 
         # MuJoCo rendering context
         self.scene = mujoco.MjvScene(model, maxgeom=1000)
