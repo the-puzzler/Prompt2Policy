@@ -7,6 +7,7 @@ from pathlib import Path
 
 import imageio
 import numpy as np
+import torch
 from stable_baselines3 import PPO
 
 from env import FrankaReachEnv, MAX_EPISODE_STEPS
@@ -168,6 +169,7 @@ def main() -> None:
 
     model_path = resolve_model_path(args.model_path)
     model = PPO.load(model_path, device=args.device)
+    current_device = args.device
 
     model_img_w, model_img_h = infer_env_image_size(model)
     env_cls = ENV_CLASSES[args.env]
@@ -217,7 +219,18 @@ def main() -> None:
                     "image": resize_for_model_input(obs_image, model_img_w, model_img_h),
                 }
                 model_obs = adapt_obs_for_model(obs_for_model, model)
-                action, _ = model.predict(model_obs, deterministic=not args.stochastic)
+                try:
+                    action, _ = model.predict(model_obs, deterministic=not args.stochastic)
+                except RuntimeError as exc:
+                    msg = str(exc)
+                    if current_device != "cpu" and ("cudnn" in msg.lower() or "cuda" in msg.lower()):
+                        print("CUDA inference failed during rollout; reloading model on CPU and continuing.")
+                        torch.cuda.empty_cache()
+                        model = PPO.load(model_path, device="cpu")
+                        current_device = "cpu"
+                        action, _ = model.predict(model_obs, deterministic=not args.stochastic)
+                    else:
+                        raise
                 obs, reward, terminated, truncated, info = env.step(action)
                 ep_reward += float(reward)
                 done = bool(terminated or truncated)

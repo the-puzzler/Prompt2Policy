@@ -11,6 +11,6 @@ dependencies = [
     "matplotlib",
     "glfw",
     "pyopengl",
-    "imageio>=2.37.2",
+    "imageio[ffmpeg]>=2.37.2",
     "scipy>=1.15.3",
 ]
