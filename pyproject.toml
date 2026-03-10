@@ -12,4 +12,5 @@ dependencies = [
     "glfw",
     "pyopengl",
     "imageio>=2.37.2",
+    "scipy>=1.15.3",
 ]

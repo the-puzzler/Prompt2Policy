@@ -11,4 +11,9 @@ PPO_PARAMS = {
     "ent_coef": 0.01,
     "vf_coef": 0.5,
     "max_grad_norm": 0.5,
+    "policy_kwargs": dict(
+        share_features_extractor=True,
+        features_extractor_kwargs=dict(cnn_output_dim=128),
+        net_arch=[128, 128],
+    ),
 }

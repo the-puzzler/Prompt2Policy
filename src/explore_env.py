@@ -19,14 +19,19 @@ from viewer import MujocoViewer
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENE_XML = os.path.join(PROJECT_ROOT, "envs", "explore_scene.xml")
 
-IMG_WIDTH = 128
-IMG_HEIGHT = 128
+IMG_WIDTH = 64
+IMG_HEIGHT = 64
 MAX_EPISODE_STEPS = 300  # 6 seconds at 20ms/step
 
 # Grid workspace bounds (reachable volume for the FR3 end-effector)
-GRID_LOW = np.array([0.0, -0.4, 0.0])
-GRID_HIGH = np.array([0.6, 0.4, 0.7])
-CELL_SIZE = 0.15  # 15 cm cells -> 4x6x5 = 120 cells
+GRID_LOW = np.array([-0.78, -0.80, 0.05])
+GRID_HIGH = np.array([0.78, 0.79, 1.12])
+CELL_SIZE = 0.15  # 15 cm cells -> 11x11x8 = 968 cells
+MIN_MANIPULABILITY = 0.05  # reject poses near singularities
+
+# Reward parameters
+R_NOVEL = 1.0      # reward for discovering a new voxel
+C_ENERGY = 1e-6   # penalty coefficient for torque squared
 
 
 class FrankaExploreEnv(gym.Env):
@@ -90,10 +95,11 @@ class FrankaExploreEnv(gym.Env):
         self._vis_renderer = None
         self._viewer = None
 
-        # Action: delta joint positions, scaled
-        self.action_scale = 0.1
+        # Action: XY + orientation joystick — [dx, dy, droll, dpitch, dyaw]
+        self.pos_scale = 0.05     # max 5 cm per step
+        self.rot_scale = 0.1     # max 0.1 rad per step
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(self.n_joints,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(5,), dtype=np.float32
         )
 
         # Grid setup
@@ -106,7 +112,7 @@ class FrankaExploreEnv(gym.Env):
         self.visited = np.zeros(self.grid_dims, dtype=bool)
 
         # Observation: state + image (image is clean, no grid overlay)
-        state_dim = self.n_joints * 2 + 3  # qpos + qvel + ee_pos
+        state_dim = self.n_joints + 3 + 9 + 6  # qpos + ee_pos + ee_rot + ee_twist
         self.observation_space = spaces.Dict(
             {
                 "state": spaces.Box(
@@ -149,8 +155,42 @@ class FrankaExploreEnv(gym.Env):
     def _get_joint_qvel(self):
         return self.data.qvel[self.joint_qvel_adr].copy()
 
+    def _get_ee_twist(self):
+        """Compute EE linear + angular velocity (6D twist) via Jacobian."""
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))
+        mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
+        J = np.vstack([jacp[:, self.joint_qvel_adr], jacr[:, self.joint_qvel_adr]])
+        return (J @ self._get_joint_qvel()).astype(np.float32)  # 6D
+
+    def _get_ee_rot(self):
+        """Return EE orientation as flattened 3x3 rotation matrix (9D)."""
+        return self.data.site_xmat[self.ee_site_id].copy().astype(np.float32)  # 9D
+
+    def _twist_to_joint_delta(self, dx, dy, droll, dpitch, dyaw):
+        """Convert XY + orientation delta to joint delta via full Jacobian pseudoinverse."""
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))
+        mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
+        J = np.vstack([
+            jacp[:, self.joint_qvel_adr],  # 3x7 translational
+            jacr[:, self.joint_qvel_adr],  # 3x7 rotational
+        ])  # 6x7
+        twist = np.array([dx, dy, 0.0, droll, dpitch, dyaw])
+        return np.linalg.pinv(J) @ twist  # 7-dim joint delta
+
     def _get_ee_pos(self):
         return self.data.site_xpos[self.ee_site_id].copy()
+
+    def _get_manipulability(self):
+        """Compute manipulability index sqrt(det(J @ J.T)) for the EE site."""
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))
+        mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
+        # Extract only the 7 arm joints
+        J = jacp[:, self.joint_qvel_adr]
+        JJT = J @ J.T
+        return np.sqrt(max(np.linalg.det(JJT), 0.0))
 
     def _ee_to_grid(self, ee_pos):
         """Convert EE position to grid cell indices, or None if outside."""
@@ -186,10 +226,11 @@ class FrankaExploreEnv(gym.Env):
 
     def _get_obs(self):
         qpos = self._get_joint_qpos()
-        qvel = self._get_joint_qvel()
         ee_pos = self._get_ee_pos()
+        ee_rot = self._get_ee_rot()
+        ee_twist = self._get_ee_twist()
 
-        state = np.concatenate([qpos, qvel, ee_pos]).astype(np.float32)
+        state = np.concatenate([qpos, ee_pos, ee_rot, ee_twist]).astype(np.float32)
 
         # Clean render — robot never sees the grid
         renderer = self._get_renderer()
@@ -204,14 +245,17 @@ class FrankaExploreEnv(gym.Env):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
 
-        # Randomize start config, rejecting if EE lands outside the grid
+        # Randomize start config, rejecting if EE outside grid or near singularity
         while True:
             random_qpos = self.np_random.uniform(self.joint_low, self.joint_high)
             for i, jid in enumerate(self.joint_ids):
                 self.data.qpos[self.model.jnt_qposadr[jid]] = random_qpos[i]
             mujoco.mj_forward(self.model, self.data)
-            if self._ee_to_grid(self._get_ee_pos()) is not None:
-                break
+            if self._ee_to_grid(self._get_ee_pos()) is None:
+                continue
+            if self._get_manipulability() < MIN_MANIPULABILITY:
+                continue
+            break
         for i in range(self.n_joints):
             self.data.ctrl[self.actuator_ids[i]] = random_qpos[i]
         self._step_count = 0
@@ -226,10 +270,12 @@ class FrankaExploreEnv(gym.Env):
 
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
-        delta = action * self.action_scale
+        dx, dy = action[:2] * self.pos_scale
+        droll, dpitch, dyaw = action[2:] * self.rot_scale
 
+        dq = self._twist_to_joint_delta(dx, dy, droll, dpitch, dyaw)
         current_qpos = self._get_joint_qpos()
-        target_qpos = np.clip(current_qpos + delta, self.joint_low, self.joint_high)
+        target_qpos = np.clip(current_qpos + dq, self.joint_low, self.joint_high)
         self.data.ctrl[self.actuator_ids_np] = target_qpos
 
         for _ in range(self.n_substeps):
@@ -237,13 +283,21 @@ class FrankaExploreEnv(gym.Env):
 
         self._step_count += 1
 
-        # Exploration reward: +1 for each new cell visited
+        # Reward: R_novel for new voxel - c_energy * ||τ||^2
         ee_pos = self._get_ee_pos()
         cell = self._ee_to_grid(ee_pos)
-        reward = 0.0
+
+        # Novel voxel bonus
+        novelty_reward = 0.0
         if cell is not None and not self.visited[cell]:
             self.visited[cell] = True
-            reward = 1.0
+            novelty_reward = R_NOVEL
+
+        # Energy penalty: penalize high torques to discourage flailing
+        torques = self.data.qfrc_actuator[self.joint_qvel_adr]
+        energy_penalty = C_ENERGY * np.sum(torques ** 2)
+
+        reward = novelty_reward - energy_penalty
 
         n_visited = int(self.visited.sum())
         coverage = n_visited / self.total_cells
@@ -253,6 +307,8 @@ class FrankaExploreEnv(gym.Env):
         info = {
             "cells_visited": n_visited,
             "coverage": coverage,
+            "novelty_reward": novelty_reward,
+            "energy_penalty": energy_penalty,
         }
 
         obs = self._get_obs()

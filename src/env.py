@@ -13,8 +13,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENE_XML = os.path.join(PROJECT_ROOT, "envs", "reach_scene.xml")
 
 # Camera image dimensions
-IMG_WIDTH = 128
-IMG_HEIGHT = 128
+IMG_WIDTH = 64
+IMG_HEIGHT = 64
 
 # Workspace bounds for target randomization (reachable front workspace)
 TARGET_LOW = np.array([0.2, -0.3, 0.15])
@@ -67,8 +67,9 @@ class FrankaReachEnv(gym.Env):
         # Target body
         self.target_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target")
 
-        # Camera
-        self.camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "front_camera")
+        # Stereo cameras for depth perception
+        self.left_camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "left_camera")
+        self.right_camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "right_camera")
 
         # Lazy-init renderers (OpenGL context can't survive subprocess pickling)
         self._offscreen_renderer = None

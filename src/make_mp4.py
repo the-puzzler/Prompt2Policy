@@ -89,7 +89,7 @@ def make_side_by_side_frame(
     model_w: int,
     model_h: int,
 ) -> np.ndarray:
-    """Compose left=human view and right=model input view into one frame."""
+    """Compose left=hum+an view and right=model input view into one frame."""
     left = resize_frame_nearest(human_frame, pane_w, pane_h)
     model_native = resize_for_model_input(model_source_frame, model_w, model_h)
     right = resize_frame_nearest(model_native, pane_w, pane_h)
@@ -137,7 +137,7 @@ def main() -> None:
         "--env",
         type=str,
         default="reach",
-        choices=list(ENV_CLASSES.keys()),
+        choices=list(ma_CLASSES.keys()),
         help="Environment type",
     )
     args = parser.parse_args()

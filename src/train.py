@@ -89,6 +89,9 @@ def main():
         **PPO_PARAMS,
     )
     print(f"SB3 model device: {model.device}")
+    print("\n=== Policy Network Architecture ===")
+    print(model.policy)
+    print("===================================\n")
 
     eval_callback = EvalCallback(
         eval_env,
