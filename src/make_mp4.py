@@ -101,13 +101,13 @@ def main() -> None:
     parser.add_argument(
         "--model-path",
         type=str,
-        default="./runs/fr3_reach/best/best_model.zip",
+        default="./runs/fr3_reach_finetuned/best/best_model.zip",
         help="Path to saved SB3 PPO model .zip",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="./runs/fr3_reach/rollout.mp4",
+        default="./runs/fr3_reach_finetuned/rollout.mp4",
         help="Output MP4 path",
     )
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to render")
@@ -137,7 +137,7 @@ def main() -> None:
         "--env",
         type=str,
         default="reach",
-        choices=list(ma_CLASSES.keys()),
+        choices=list(ENV_CLASSES.keys()),
         help="Environment type",
     )
     args = parser.parse_args()

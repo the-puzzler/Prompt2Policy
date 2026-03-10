@@ -16,7 +16,7 @@ def compute_reward(ee_pos: np.ndarray, target_pos: np.ndarray) -> tuple[float, b
         info: Dict with extra metrics.
     """
     distance = np.linalg.norm(ee_pos - target_pos)
-    success_threshold = 0.03
+    success_threshold = 0.06
 
     # Dense reward: negative distance
     reward = -distance

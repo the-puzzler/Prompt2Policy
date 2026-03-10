@@ -23,7 +23,7 @@
 
     <!-- Target (green sphere) -->
     <body name="target" pos="0.4 0.0 0.4">
-      <geom name="target_geom" type="sphere" size="0.025" material="target_green"
+      <geom name="target_geom" type="sphere" size="0.06" material="target_green"
             contype="0" conaffinity="0"/>
       <site name="target_site" size="0.001"/>
     </body>

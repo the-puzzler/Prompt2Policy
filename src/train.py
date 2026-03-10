@@ -43,6 +43,7 @@ def main():
     parser.add_argument("--vec-env", type=str, default="subproc", choices=["subproc", "dummy"])
     parser.add_argument("--render", action="store_true", help="Open MuJoCo viewer from the camera POV during training")
     parser.add_argument("--env", type=str, default="reach", choices=list(ENV_CLASSES.keys()), help="Environment to train on")
+    parser.add_argument("--pretrained-model", type=str, default=None, help="Path to a pretrained model zip to fine-tune (e.g. runs/fr3_explore/best/best_model)")
     args = parser.parse_args()
 
     env_cls = ENV_CLASSES[args.env]
@@ -79,15 +80,24 @@ def main():
     # Eval env (VecTransposeImage to match training env wrapping)
     eval_env = VecTransposeImage(VecMonitor(DummyVecEnv([make_env(args.seed + 100, env_cls=env_cls)])))
 
-    model = PPO(
-        "MultiInputPolicy",
-        train_envs,
-        verbose=1,
-        seed=args.seed,
-        device=device,
-        tensorboard_log=f"{args.save_path}/tb",
-        **PPO_PARAMS,
-    )
+    if args.pretrained_model:
+        print(f"Loading pretrained model from: {args.pretrained_model}")
+        model = PPO.load(
+            args.pretrained_model,
+            env=train_envs,
+            device=device,
+            tensorboard_log=f"{args.save_path}/tb",
+        )
+    else:
+        model = PPO(
+            "MultiInputPolicy",
+            train_envs,
+            verbose=1,
+            seed=args.seed,
+            device=device,
+            tensorboard_log=f"{args.save_path}/tb",
+            **PPO_PARAMS,
+        )
     print(f"SB3 model device: {model.device}")
     print("\n=== Policy Network Architecture ===")
     print(model.policy)

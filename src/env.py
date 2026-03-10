@@ -67,20 +67,20 @@ class FrankaReachEnv(gym.Env):
         # Target body
         self.target_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target")
 
-        # Stereo cameras for depth perception
-        self.left_camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "left_camera")
-        self.right_camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "right_camera")
+        # Camera (left_camera matches the explore env's front_camera position)
+        self.camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "left_camera")
 
         # Lazy-init renderers (OpenGL context can't survive subprocess pickling)
         self._offscreen_renderer = None
         self._viewer = None
 
-        # Action: delta joint positions, scaled
-        self.action_scale = 0.05
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(self.n_joints,), dtype=np.float32)
+        # Action: XY + orientation joystick — [dx, dy, droll, dpitch, dyaw] (matches explore env)
+        self.pos_scale = 0.05
+        self.rot_scale = 0.1
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
 
-        # Observation
-        state_dim = self.n_joints * 2 + 3  # qpos + qvel + ee_pos
+        # Observation: matches explore env (qpos + ee_pos + ee_rot + ee_twist)
+        state_dim = self.n_joints + 3 + 9 + 6  # 25D
         self.observation_space = spaces.Dict({
             "state": spaces.Box(low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32),
             "image": spaces.Box(low=0, high=255, shape=(self.img_height, self.img_width, 3), dtype=np.uint8),
@@ -109,6 +109,24 @@ class FrankaReachEnv(gym.Env):
     def _get_ee_pos(self):
         return self.data.site_xpos[self.ee_site_id].copy()
 
+    def _get_ee_rot(self):
+        return self.data.site_xmat[self.ee_site_id].copy().astype(np.float32)
+
+    def _get_ee_twist(self):
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))
+        mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
+        J = np.vstack([jacp[:, self.joint_qvel_adr], jacr[:, self.joint_qvel_adr]])
+        return (J @ self._get_joint_qvel()).astype(np.float32)
+
+    def _twist_to_joint_delta(self, dx, dy, droll, dpitch, dyaw):
+        jacp = np.zeros((3, self.model.nv))
+        jacr = np.zeros((3, self.model.nv))
+        mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
+        J = np.vstack([jacp[:, self.joint_qvel_adr], jacr[:, self.joint_qvel_adr]])
+        twist = np.array([dx, dy, 0.0, droll, dpitch, dyaw])
+        return np.linalg.pinv(J) @ twist
+
     def _get_target_pos(self):
         return self.data.xpos[self.target_body_id].copy()
 
@@ -123,10 +141,11 @@ class FrankaReachEnv(gym.Env):
 
     def _get_obs(self):
         qpos = self._get_joint_qpos()
-        qvel = self._get_joint_qvel()
         ee_pos = self._get_ee_pos()
+        ee_rot = self._get_ee_rot()
+        ee_twist = self._get_ee_twist()
 
-        state = np.concatenate([qpos, qvel, ee_pos]).astype(np.float32)
+        state = np.concatenate([qpos, ee_pos, ee_rot, ee_twist]).astype(np.float32)
 
         # Render camera image
         renderer = self._get_renderer()
@@ -154,13 +173,13 @@ class FrankaReachEnv(gym.Env):
 
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
-        delta = action * self.action_scale
+        dx, dy = action[:2] * self.pos_scale
+        droll, dpitch, dyaw = action[2:] * self.rot_scale
 
-        # Apply delta to current joint targets
+        dq = self._twist_to_joint_delta(dx, dy, droll, dpitch, dyaw)
         current_qpos = self._get_joint_qpos()
-        target_qpos = np.clip(current_qpos + delta, self.joint_low, self.joint_high)
+        target_qpos = np.clip(current_qpos + dq, self.joint_low, self.joint_high)
 
-        # Set actuator controls (position targets)
         self.data.ctrl[self.actuator_ids_np] = target_qpos
 
         # Step simulation
