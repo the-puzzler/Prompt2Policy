@@ -1,5 +1,8 @@
 """PPO hyperparameters for FR3 reach task."""
 
+from small_extractor import TinyCombinedExtractor
+
+
 PPO_PARAMS = {
     "learning_rate": 3e-4,
     "n_steps": 2048,
@@ -13,7 +16,11 @@ PPO_PARAMS = {
     "max_grad_norm": 0.5,
     "policy_kwargs": dict(
         share_features_extractor=True,
-        features_extractor_kwargs=dict(cnn_output_dim=128),
-        net_arch=[128, 128],
+        features_extractor_class=TinyCombinedExtractor,
+        features_extractor_kwargs=dict(
+            image_feature_dim=24,
+            state_hidden_dim=32,
+        ),
+        net_arch=[64, 64],
     ),
 }

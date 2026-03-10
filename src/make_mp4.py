@@ -11,6 +11,7 @@ from stable_baselines3 import PPO
 
 from env import FrankaReachEnv, MAX_EPISODE_STEPS
 from explore_env import FrankaExploreEnv
+from history_wrapper import StateHistoryWrapper
 
 ENV_CLASSES = {
     "reach": FrankaReachEnv,
@@ -45,17 +46,33 @@ def infer_env_image_size(model: PPO) -> tuple[int, int]:
 
 
 def adapt_obs_for_model(obs: dict, model: PPO) -> dict:
-    expected = tuple(model.observation_space.spaces["image"].shape)
+    expected_spaces = model.observation_space.spaces
+    if "image" not in expected_spaces:
+        raise KeyError("Loaded model observation space does not contain 'image'")
+
+    expected = tuple(expected_spaces["image"].shape)
     image = obs["image"]
     if tuple(image.shape) == expected:
-        return obs
-    # Convert HWC -> CHW when the loaded policy expects channels-first.
-    if image.ndim == 3 and expected[0] < expected[1]:
-        if image.shape[2] == expected[0] and image.shape[0] == expected[1] and image.shape[1] == expected[2]:
-            return {**obs, "image": np.transpose(image, (2, 0, 1))}
-    raise ValueError(
-        f"Observation image shape {image.shape} does not match model expectation {expected}"
-    )
+        out = dict(obs)
+    else:
+        # Convert HWC -> CHW when the loaded policy expects channels-first.
+        if image.ndim == 3 and expected[0] < expected[1]:
+            if image.shape[2] == expected[0] and image.shape[0] == expected[1] and image.shape[1] == expected[2]:
+                out = {**obs, "image": np.transpose(image, (2, 0, 1))}
+            else:
+                raise ValueError(
+                    f"Observation image shape {image.shape} does not match model expectation {expected}"
+                )
+        else:
+            raise ValueError(
+                f"Observation image shape {image.shape} does not match model expectation {expected}"
+            )
+
+    # Keep only keys expected by the model (supports both legacy and history-enabled policies).
+    missing = [k for k in expected_spaces.keys() if k not in out]
+    if missing:
+        raise KeyError(f"Observation is missing keys required by model: {missing}")
+    return {k: out[k] for k in expected_spaces.keys()}
 
 
 def resize_frame_nearest(frame: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
@@ -142,6 +159,8 @@ def main() -> None:
         choices=list(ENV_CLASSES.keys()),
         help="Environment type",
     )
+    parser.add_argument("--history-len", type=int, default=5, help="Number of state history taps")
+    parser.add_argument("--history-stride", type=int, default=2, help="Spacing between history taps in env steps")
     args = parser.parse_args()
 
     output_path = Path(args.output)
@@ -152,11 +171,12 @@ def main() -> None:
 
     model_img_w, model_img_h = infer_env_image_size(model)
     env_cls = ENV_CLASSES[args.env]
-    env = env_cls(
+    base_env = env_cls(
         render_mode="rgb_array",
         img_width=max(args.width, model_img_w),
         img_height=max(args.height, model_img_h),
     )
+    env = StateHistoryWrapper(base_env, history_len=args.history_len, history_stride=args.history_stride)
 
     frame_count = 0
     rewards: list[float] = []

@@ -32,6 +32,7 @@ MIN_MANIPULABILITY = 0.05  # reject poses near singularities
 # Reward parameters
 R_NOVEL = 1.0      # reward for discovering a new voxel
 C_ENERGY = 1e-6   # penalty coefficient for torque squared
+SUCCESS_COVERAGE = 0.30  # episode success threshold based on visited-cell coverage
 
 
 class FrankaExploreEnv(gym.Env):
@@ -318,12 +319,14 @@ class FrankaExploreEnv(gym.Env):
 
         n_visited = int(self.visited.sum())
         coverage = n_visited / self.total_cells
+        success = coverage >= SUCCESS_COVERAGE
 
         terminated = False
         truncated = self._step_count >= MAX_EPISODE_STEPS
         info = {
             "cells_visited": n_visited,
             "coverage": coverage,
+            "is_success": bool(success),
             "novelty_reward": novelty_reward,
             "energy_penalty": energy_penalty,
         }

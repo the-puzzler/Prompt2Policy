@@ -64,13 +64,13 @@ uv pip install -e .
 cd src
 
 # Train explore from scratch
-python train.py --env explore --save-path runs/fr3_explore --render
+python train.py --env explore --runs-dir runs --render
 
 # Train reach from scratch
-python train.py --env reach --save-path runs/fr3_reach --render
+python train.py --env reach --runs-dir runs --render
 
 # Fine-tune reach from a pretrained explore model (transfer learning)
-python train.py --env reach --pretrained-model runs/fr3_explore/best/best_model --save-path runs/fr3_reach_finetuned --render
+python train.py --env reach --pretrained-model runs/explore_YYYYMMDD_HHMMSS/best/best_model.zip --runs-dir runs --render
 ```
 
 All CLI flags:
@@ -81,7 +81,8 @@ All CLI flags:
 | `--total-timesteps` | 1000000 | Total training steps |
 | `--n-envs` | 4 | Parallel environments |
 | `--eval-freq` | 25000 | Steps between evaluations |
-| `--save-path` | `./runs/fr3_reach` | Output directory |
+| `--runs-dir` | `./runs` | Base directory for auto timestamped runs |
+| `--plot-every` | 5 | Save/update plots every N rollout iterations |
 | `--seed` | 42 | Random seed |
 | `--device` | `auto` | `auto`, `cuda`, or `cpu` |
 | `--vec-env` | `subproc` | `subproc` (parallel) or `dummy` |
@@ -90,12 +91,15 @@ All CLI flags:
 
 ### Monitoring
 
-```bash
-tensorboard --logdir src/runs/fr3_explore/tb
-tensorboard --logdir src/runs/fr3_reach/tb
-```
+Each training run auto-creates:
 
-Best model (by eval reward) is saved to `<save-path>/best/best_model.zip`, final model to `<save-path>/final_model.zip`.
+- `runs/<env>_YYYYMMDD_HHMMSS/config.json` with key run/training settings and PPO params
+- `runs/<env>_YYYYMMDD_HHMMSS/stats.csv` with per-rollout iteration stats
+- `runs/<env>_YYYYMMDD_HHMMSS/training_plots.png` with:
+  - subplot 1: average reward (train + eval)
+  - subplot 2: success rate (train + eval)
+- `runs/<env>_YYYYMMDD_HHMMSS/best/best_model.zip` best model (by eval reward)
+- `runs/<env>_YYYYMMDD_HHMMSS/final_model.zip` final model
 
 ### Rendering rollouts
 
@@ -103,10 +107,10 @@ Best model (by eval reward) is saved to `<save-path>/best/best_model.zip`, final
 cd src
 
 # Render reach policy
-python make_mp4.py --env reach --model-path runs/fr3_reach/best/best_model --output runs/fr3_reach/rollout.mp4 --episodes 5
+python make_mp4.py --env reach --model-path runs/reach_YYYYMMDD_HHMMSS/best/best_model.zip --output runs/reach_YYYYMMDD_HHMMSS/rollout.mp4 --episodes 5
 
 # Render explore policy
-python make_mp4.py --env explore --model-path runs/fr3_explore/best/best_model --output runs/fr3_explore/rollout.mp4 --episodes 3
+python make_mp4.py --env explore --model-path runs/explore_YYYYMMDD_HHMMSS/best/best_model.zip --output runs/explore_YYYYMMDD_HHMMSS/rollout.mp4 --episodes 3
 ```
 
 The output video has three panes side by side: **human view** | **front camera (model input)** | **top-down camera (model input)**.
