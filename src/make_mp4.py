@@ -38,10 +38,10 @@ def infer_env_image_size(model: PPO) -> tuple[int, int]:
     shape = tuple(img_space.shape)
     if len(shape) != 3:
         raise ValueError(f"Unexpected image observation shape: {shape}")
-    # If channels-first, shape is (C, H, W); otherwise (H, W, C).
-    if shape[0] in (1, 3, 4):
-        return int(shape[2]), int(shape[1])  # width, height
-    return int(shape[1]), int(shape[0])  # width, height
+    # SB3 VecTransposeImage stores images as (C, H, W); detect by checking if first dim is small.
+    if shape[0] < shape[1] and shape[0] < shape[2]:
+        return int(shape[2]), int(shape[1])  # CHW -> width=shape[2], height=shape[1]
+    return int(shape[1]), int(shape[0])  # HWC -> width=shape[1], height=shape[0]
 
 
 def adapt_obs_for_model(obs: dict, model: PPO) -> dict:
@@ -49,11 +49,10 @@ def adapt_obs_for_model(obs: dict, model: PPO) -> dict:
     image = obs["image"]
     if tuple(image.shape) == expected:
         return obs
-    if len(expected) == 3 and expected[0] in (1, 3, 4) and image.ndim == 3:
-        # Convert HWC -> CHW when the loaded policy expects channels-first.
-        if image.shape[0] == expected[1] and image.shape[1] == expected[2] and image.shape[2] == expected[0]:
-            converted = np.transpose(image, (2, 0, 1))
-            return {**obs, "image": converted}
+    # Convert HWC -> CHW when the loaded policy expects channels-first.
+    if image.ndim == 3 and expected[0] < expected[1]:
+        if image.shape[2] == expected[0] and image.shape[0] == expected[1] and image.shape[1] == expected[2]:
+            return {**obs, "image": np.transpose(image, (2, 0, 1))}
     raise ValueError(
         f"Observation image shape {image.shape} does not match model expectation {expected}"
     )
@@ -69,31 +68,34 @@ def resize_frame_nearest(frame: np.ndarray, out_w: int, out_h: int) -> np.ndarra
 
 
 def resize_for_model_input(frame: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
-    in_h, in_w = frame.shape[:2]
+    in_h, in_w, c = frame.shape
     if in_w == out_w and in_h == out_h:
         return frame
     # Prefer cheap box downsampling when integer ratio; fallback to nearest otherwise.
     if in_h % out_h == 0 and in_w % out_w == 0 and in_h >= out_h and in_w >= out_w:
         fy = in_h // out_h
         fx = in_w // out_w
-        reshaped = frame.reshape(out_h, fy, out_w, fx, 3)
+        reshaped = frame.reshape(out_h, fy, out_w, fx, c)
         return reshaped.mean(axis=(1, 3)).astype(np.uint8)
     return resize_frame_nearest(frame, out_w, out_h)
 
 
-def make_side_by_side_frame(
+def make_three_pane_frame(
     human_frame: np.ndarray,
-    model_source_frame: np.ndarray,
+    front_img: np.ndarray,
+    top_img: np.ndarray,
     pane_w: int,
     pane_h: int,
     model_w: int,
     model_h: int,
 ) -> np.ndarray:
-    """Compose left=hum+an view and right=model input view into one frame."""
+    """Compose three panes: human view | front camera | top camera."""
     left = resize_frame_nearest(human_frame, pane_w, pane_h)
-    model_native = resize_for_model_input(model_source_frame, model_w, model_h)
-    right = resize_frame_nearest(model_native, pane_w, pane_h)
-    return np.concatenate([left, right], axis=1)
+    front_native = resize_for_model_input(front_img, model_w, model_h)
+    mid = resize_frame_nearest(front_native, pane_w, pane_h)
+    top_native = resize_for_model_input(top_img, model_w, model_h)
+    right = resize_frame_nearest(top_native, pane_w, pane_h)
+    return np.concatenate([left, mid, right], axis=1)
 
 
 def main() -> None:
@@ -101,13 +103,13 @@ def main() -> None:
     parser.add_argument(
         "--model-path",
         type=str,
-        default="./runs/fr3_reach_finetuned/best/best_model.zip",
+        default="./runs/fr3_explore_v2/best/best_model.zip",
         help="Path to saved SB3 PPO model .zip",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="./runs/fr3_reach_finetuned/rollout.mp4",
+        default="./runs/fr3_explore_v2/rollout.mp4",
         help="Output MP4 path",
     )
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to render")
@@ -160,6 +162,19 @@ def main() -> None:
     rewards: list[float] = []
     successes = 0
 
+    def build_frame(obs_image: np.ndarray, human_frame: np.ndarray) -> np.ndarray:
+        front_img = obs_image[:, :, :3]
+        top_img = obs_image[:, :, 3:]
+        return make_three_pane_frame(
+            human_frame=human_frame,
+            front_img=front_img,
+            top_img=top_img,
+            pane_w=args.width,
+            pane_h=args.height,
+            model_w=model_img_w,
+            model_h=model_img_h,
+        )
+
     with imageio.get_writer(output_path.as_posix(), fps=args.fps, codec="libx264") as writer:
         for ep in range(args.episodes):
             obs, _ = env.reset(seed=args.seed + ep)
@@ -169,19 +184,10 @@ def main() -> None:
             steps = 0
 
             obs_image = np.asarray(obs["image"], dtype=np.uint8)
-            # Human view: env.render() includes overlays (e.g. grid); falls back to obs image
             human_frame = env.render()
             if human_frame is None:
-                human_frame = obs_image
-            frame = make_side_by_side_frame(
-                human_frame=human_frame,
-                model_source_frame=obs_image,
-                pane_w=args.width,
-                pane_h=args.height,
-                model_w=model_img_w,
-                model_h=model_img_h,
-            )
-            writer.append_data(frame)
+                human_frame = obs_image[:, :, :3]
+            writer.append_data(build_frame(obs_image, human_frame))
             frame_count += 1
 
             while not done and steps < args.max_steps:
@@ -200,16 +206,8 @@ def main() -> None:
                 next_obs_image = np.asarray(obs["image"], dtype=np.uint8)
                 human_frame = env.render()
                 if human_frame is None:
-                    human_frame = next_obs_image
-                frame = make_side_by_side_frame(
-                    human_frame=human_frame,
-                    model_source_frame=next_obs_image,
-                    pane_w=args.width,
-                    pane_h=args.height,
-                    model_w=model_img_w,
-                    model_h=model_img_h,
-                )
-                writer.append_data(frame)
+                    human_frame = next_obs_image[:, :, :3]
+                writer.append_data(build_frame(next_obs_image, human_frame))
                 frame_count += 1
 
                 if bool(info.get("is_success", False)):
@@ -227,7 +225,7 @@ def main() -> None:
     print(f"Loaded model: {model_path}")
     print(f"Policy obs image size: {model_img_w}x{model_img_h}")
     print(f"Video pane size (each view): {args.width}x{args.height}")
-    print(f"Final video size: {args.width * 2}x{args.height} (left=human, right=model)")
+    print(f"Final video size: {args.width * 3}x{args.height} (left=human, mid=front cam, right=top cam)")
     print(f"Frames: {frame_count}")
     print(f"Episodes: {args.episodes}")
     print(f"Mean episode reward: {mean_reward:.3f}")

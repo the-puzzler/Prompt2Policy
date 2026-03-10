@@ -85,21 +85,25 @@ class FrankaExploreEnv(gym.Env):
             self.model, mujoco.mjtObj.mjOBJ_SITE, "attachment_site"
         )
 
-        # Camera
+        # Cameras: front + top-down
         self.camera_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_CAMERA, "front_camera"
+        )
+        self.top_camera_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_CAMERA, "top_camera"
         )
 
         # Lazy-init renderers (OpenGL context can't survive subprocess pickling)
         self._offscreen_renderer = None
+        self._top_renderer = None
         self._vis_renderer = None
         self._viewer = None
 
-        # Action: XY + orientation joystick — [dx, dy, droll, dpitch, dyaw]
+        # Action: XYZ + orientation joystick — [dx, dy, dz, droll, dpitch, dyaw]
         self.pos_scale = 0.05     # max 5 cm per step
         self.rot_scale = 0.1     # max 0.1 rad per step
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(5,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(6,), dtype=np.float32
         )
 
         # Grid setup
@@ -111,7 +115,7 @@ class FrankaExploreEnv(gym.Env):
         self.total_cells = int(np.prod(self.grid_dims))
         self.visited = np.zeros(self.grid_dims, dtype=bool)
 
-        # Observation: state + image (image is clean, no grid overlay)
+        # Observation: state + dual-camera image (front + top stacked as 6 channels)
         state_dim = self.n_joints + 3 + 9 + 6  # qpos + ee_pos + ee_rot + ee_twist
         self.observation_space = spaces.Dict(
             {
@@ -121,7 +125,7 @@ class FrankaExploreEnv(gym.Env):
                 "image": spaces.Box(
                     low=0,
                     high=255,
-                    shape=(self.img_height, self.img_width, 3),
+                    shape=(self.img_height, self.img_width, 6),
                     dtype=np.uint8,
                 ),
             }
@@ -139,6 +143,13 @@ class FrankaExploreEnv(gym.Env):
                 self.model, height=self.img_height, width=self.img_width
             )
         return self._offscreen_renderer
+
+    def _get_top_renderer(self):
+        if self._top_renderer is None:
+            self._top_renderer = mujoco.Renderer(
+                self.model, height=self.img_height, width=self.img_width
+            )
+        return self._top_renderer
 
     def _get_vis_renderer(self):
         if self._vis_renderer is None:
@@ -167,8 +178,8 @@ class FrankaExploreEnv(gym.Env):
         """Return EE orientation as flattened 3x3 rotation matrix (9D)."""
         return self.data.site_xmat[self.ee_site_id].copy().astype(np.float32)  # 9D
 
-    def _twist_to_joint_delta(self, dx, dy, droll, dpitch, dyaw):
-        """Convert XY + orientation delta to joint delta via full Jacobian pseudoinverse."""
+    def _twist_to_joint_delta(self, dx, dy, dz, droll, dpitch, dyaw):
+        """Convert XYZ + orientation delta to joint delta via full Jacobian pseudoinverse."""
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
@@ -176,7 +187,7 @@ class FrankaExploreEnv(gym.Env):
             jacp[:, self.joint_qvel_adr],  # 3x7 translational
             jacr[:, self.joint_qvel_adr],  # 3x7 rotational
         ])  # 6x7
-        twist = np.array([dx, dy, 0.0, droll, dpitch, dyaw])
+        twist = np.array([dx, dy, dz, droll, dpitch, dyaw])
         return np.linalg.pinv(J) @ twist  # 7-dim joint delta
 
     def _get_ee_pos(self):
@@ -232,10 +243,16 @@ class FrankaExploreEnv(gym.Env):
 
         state = np.concatenate([qpos, ee_pos, ee_rot, ee_twist]).astype(np.float32)
 
-        # Clean render — robot never sees the grid
-        renderer = self._get_renderer()
-        renderer.update_scene(self.data, camera=self.camera_id)
-        image = renderer.render()
+        # Clean render — robot never sees the grid; front + top stacked as 6 channels
+        front_renderer = self._get_renderer()
+        front_renderer.update_scene(self.data, camera=self.camera_id)
+        front_img = front_renderer.render()
+
+        top_renderer = self._get_top_renderer()
+        top_renderer.update_scene(self.data, camera=self.top_camera_id)
+        top_img = top_renderer.render()
+
+        image = np.concatenate([front_img, top_img], axis=2)
 
         return {"state": state, "image": image}
 
@@ -270,10 +287,10 @@ class FrankaExploreEnv(gym.Env):
 
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
-        dx, dy = action[:2] * self.pos_scale
-        droll, dpitch, dyaw = action[2:] * self.rot_scale
+        dx, dy, dz = action[:3] * self.pos_scale
+        droll, dpitch, dyaw = action[3:] * self.rot_scale
 
-        dq = self._twist_to_joint_delta(dx, dy, droll, dpitch, dyaw)
+        dq = self._twist_to_joint_delta(dx, dy, dz, droll, dpitch, dyaw)
         current_qpos = self._get_joint_qpos()
         target_qpos = np.clip(current_qpos + dq, self.joint_low, self.joint_high)
         self.data.ctrl[self.actuator_ids_np] = target_qpos
@@ -337,6 +354,9 @@ class FrankaExploreEnv(gym.Env):
         if self._offscreen_renderer is not None:
             self._offscreen_renderer.close()
             self._offscreen_renderer = None
+        if self._top_renderer is not None:
+            self._top_renderer.close()
+            self._top_renderer = None
         if self._vis_renderer is not None:
             self._vis_renderer.close()
             self._vis_renderer = None

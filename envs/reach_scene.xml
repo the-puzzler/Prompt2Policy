@@ -33,6 +33,6 @@
     <camera name="right_camera" pos="1.5 1.0 1.3" xyaxes="0.6247 -0.7809 0 0.4011 0.3209 0.858" fovy="50"/>
 
     <!-- Top-down camera (for reference) -->
-    <camera name="top_camera" pos="0.35 0.0 1.4" xyaxes="0 -1 0 1 0 0" fovy="60"/>
+    <camera name="top_camera" pos="0.0 0.0 1.8" xyaxes="0 -1 0 1 0 0" fovy="75"/>
   </worldbody>
 </mujoco>

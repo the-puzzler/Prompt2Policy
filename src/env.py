@@ -67,23 +67,25 @@ class FrankaReachEnv(gym.Env):
         # Target body
         self.target_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "target")
 
-        # Camera (left_camera matches the explore env's front_camera position)
+        # Cameras: front (left_camera) + top-down for depth perception
         self.camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "left_camera")
+        self.top_camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "top_camera")
 
         # Lazy-init renderers (OpenGL context can't survive subprocess pickling)
         self._offscreen_renderer = None
+        self._top_renderer = None
         self._viewer = None
 
-        # Action: XY + orientation joystick — [dx, dy, droll, dpitch, dyaw] (matches explore env)
+        # Action: XYZ + orientation joystick — [dx, dy, dz, droll, dpitch, dyaw]
         self.pos_scale = 0.05
         self.rot_scale = 0.1
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
 
-        # Observation: matches explore env (qpos + ee_pos + ee_rot + ee_twist)
+        # Observation: state + dual-camera image (front + top stacked as 6 channels)
         state_dim = self.n_joints + 3 + 9 + 6  # 25D
         self.observation_space = spaces.Dict({
             "state": spaces.Box(low=-np.inf, high=np.inf, shape=(state_dim,), dtype=np.float32),
-            "image": spaces.Box(low=0, high=255, shape=(self.img_height, self.img_width, 3), dtype=np.uint8),
+            "image": spaces.Box(low=0, high=255, shape=(self.img_height, self.img_width, 6), dtype=np.uint8),
         })
 
         # Home position from keyframe
@@ -99,6 +101,15 @@ class FrankaReachEnv(gym.Env):
                 width=self.img_width,
             )
         return self._offscreen_renderer
+
+    def _get_top_renderer(self):
+        if self._top_renderer is None:
+            self._top_renderer = mujoco.Renderer(
+                self.model,
+                height=self.img_height,
+                width=self.img_width,
+            )
+        return self._top_renderer
 
     def _get_joint_qpos(self):
         return self.data.qpos[self.joint_qpos_adr].copy()
@@ -119,12 +130,12 @@ class FrankaReachEnv(gym.Env):
         J = np.vstack([jacp[:, self.joint_qvel_adr], jacr[:, self.joint_qvel_adr]])
         return (J @ self._get_joint_qvel()).astype(np.float32)
 
-    def _twist_to_joint_delta(self, dx, dy, droll, dpitch, dyaw):
+    def _twist_to_joint_delta(self, dx, dy, dz, droll, dpitch, dyaw):
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacSite(self.model, self.data, jacp, jacr, self.ee_site_id)
         J = np.vstack([jacp[:, self.joint_qvel_adr], jacr[:, self.joint_qvel_adr]])
-        twist = np.array([dx, dy, 0.0, droll, dpitch, dyaw])
+        twist = np.array([dx, dy, dz, droll, dpitch, dyaw])
         return np.linalg.pinv(J) @ twist
 
     def _get_target_pos(self):
@@ -147,10 +158,16 @@ class FrankaReachEnv(gym.Env):
 
         state = np.concatenate([qpos, ee_pos, ee_rot, ee_twist]).astype(np.float32)
 
-        # Render camera image
-        renderer = self._get_renderer()
-        renderer.update_scene(self.data, camera=self.camera_id)
-        image = renderer.render()
+        # Render front + top cameras, stack into 6-channel image
+        front_renderer = self._get_renderer()
+        front_renderer.update_scene(self.data, camera=self.camera_id)
+        front_img = front_renderer.render()
+
+        top_renderer = self._get_top_renderer()
+        top_renderer.update_scene(self.data, camera=self.top_camera_id)
+        top_img = top_renderer.render()
+
+        image = np.concatenate([front_img, top_img], axis=2)
 
         return {"state": state, "image": image}
 
@@ -173,10 +190,10 @@ class FrankaReachEnv(gym.Env):
 
     def step(self, action):
         action = np.clip(action, -1.0, 1.0)
-        dx, dy = action[:2] * self.pos_scale
-        droll, dpitch, dyaw = action[2:] * self.rot_scale
+        dx, dy, dz = action[:3] * self.pos_scale
+        droll, dpitch, dyaw = action[3:] * self.rot_scale
 
-        dq = self._twist_to_joint_delta(dx, dy, droll, dpitch, dyaw)
+        dq = self._twist_to_joint_delta(dx, dy, dz, droll, dpitch, dyaw)
         current_qpos = self._get_joint_qpos()
         target_qpos = np.clip(current_qpos + dq, self.joint_low, self.joint_high)
 
@@ -217,6 +234,9 @@ class FrankaReachEnv(gym.Env):
         if self._offscreen_renderer is not None:
             self._offscreen_renderer.close()
             self._offscreen_renderer = None
+        if self._top_renderer is not None:
+            self._top_renderer.close()
+            self._top_renderer = None
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
